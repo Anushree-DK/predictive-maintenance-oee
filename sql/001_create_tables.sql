@@ -1,0 +1,66 @@
+-- Run this once against a real Snowflake account (SNOWFLAKE_MODE=snowflake).
+-- Table shapes mirror data/mock/*.csv so the pipeline code doesn't change between modes.
+
+CREATE DATABASE IF NOT EXISTS PDM;
+CREATE SCHEMA IF NOT EXISTS PDM.PUBLIC;
+USE SCHEMA PDM.PUBLIC;
+
+CREATE TABLE IF NOT EXISTS MACHINE_DATA (
+    MACHINE_ID       STRING PRIMARY KEY,
+    MACHINE_NAME     STRING,
+    LINE             STRING,
+    MODEL            STRING,
+    INSTALL_DATE     DATE
+);
+
+-- One row per (machine, time_cycle), NASA C-MAPSS-shaped: 3 operational settings, 21 sensors.
+CREATE TABLE IF NOT EXISTS RAW_SENSOR_DATA (
+    MACHINE_ID       STRING,
+    TIME_CYCLE       NUMBER,
+    OP_SETTING_1     FLOAT,
+    OP_SETTING_2     FLOAT,
+    OP_SETTING_3     FLOAT,
+    SENSOR_1         FLOAT, SENSOR_2  FLOAT, SENSOR_3  FLOAT, SENSOR_4  FLOAT,
+    SENSOR_5         FLOAT, SENSOR_6  FLOAT, SENSOR_7  FLOAT, SENSOR_8  FLOAT,
+    SENSOR_9         FLOAT, SENSOR_10 FLOAT, SENSOR_11 FLOAT, SENSOR_12 FLOAT,
+    SENSOR_13        FLOAT, SENSOR_14 FLOAT, SENSOR_15 FLOAT, SENSOR_16 FLOAT,
+    SENSOR_17        FLOAT, SENSOR_18 FLOAT, SENSOR_19 FLOAT, SENSOR_20 FLOAT,
+    SENSOR_21        FLOAT,
+    RECORDED_AT      TIMESTAMP_NTZ
+);
+
+CREATE TABLE IF NOT EXISTS MAINTENANCE_HISTORY (
+    EVENT_ID         STRING PRIMARY KEY,
+    MACHINE_ID       STRING,
+    EVENT_DATE       DATE,
+    EVENT_TYPE       STRING,      -- e.g. PREVENTIVE, CORRECTIVE, INSPECTION
+    DESCRIPTION      STRING,
+    DOWNTIME_MINUTES NUMBER
+);
+
+CREATE TABLE IF NOT EXISTS PRODUCTION_DATA (
+    MACHINE_ID                  STRING,
+    SHIFT_DATE                  DATE,
+    SHIFT                       STRING,
+    PLANNED_PRODUCTION_TIME_MIN NUMBER,
+    DOWNTIME_MIN                NUMBER,
+    IDEAL_CYCLE_TIME_SEC        FLOAT,
+    TOTAL_COUNT                 NUMBER,
+    GOOD_COUNT                  NUMBER
+);
+
+-- Logs what happened after each agentic action, closing the feedback loop.
+CREATE TABLE IF NOT EXISTS ACTION_OUTCOMES (
+    ACTION_ID              STRING PRIMARY KEY,
+    MACHINE_ID              STRING,
+    ACTION_TYPE             STRING,   -- CREATE_WORK_ORDER, SCHEDULE_REPAIR, RECOMMEND_PARTS
+    RECOMMENDED_AT           TIMESTAMP_NTZ,
+    RUL_PREDICTION_AT_ACTION NUMBER,
+    RISK_CLASS_AT_ACTION     STRING,
+    CONFIDENCE_AT_ACTION     FLOAT,
+    TAKEN_FLAG               BOOLEAN,
+    TAKEN_AT                 TIMESTAMP_NTZ,
+    FAILURE_OCCURRED_FLAG    BOOLEAN,
+    FAILURE_DATE             DATE,
+    NOTES                    STRING
+);

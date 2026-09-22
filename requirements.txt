@@ -1,0 +1,10 @@
+pandas>=2.0
+numpy>=1.24
+scikit-learn>=1.3
+streamlit>=1.32
+plotly>=5.18
+python-dotenv>=1.0
+snowflake-snowpark-python>=1.14
+# Pinned: newer cryptography versions (a snowpark transitive dep) ship no
+# Python 3.9 wheel and fall back to a slow Rust source build. 48.0.1 has one.
+cryptography==48.0.1

@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+data/mock/*.csv
+data/raw/
+models/*.joblib
+.DS_Store
+.local_ca_bundle.pem
