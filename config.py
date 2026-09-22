@@ -30,3 +30,12 @@ RISK_THRESHOLDS = {
     "HIGH": 40,
     "MEDIUM": 90,
 }  # anything above MEDIUM threshold is LOW
+
+# Business-impact assumptions (src/business_impact.py). COST_PER_DOWNTIME_HOUR_USD
+# is a cited industry benchmark (MaintainX 2024 State of Industrial Maintenance
+# report, average across surveyed manufacturers); the two duration figures are
+# explicit, editable assumptions — not measured for any real site — used only to
+# illustrate the planned-vs-unplanned-repair cost gap this system is meant to close.
+COST_PER_DOWNTIME_HOUR_USD = 25_000
+AVG_UNPLANNED_REPAIR_HOURS = 18  # emergency repair: parts sourcing, unplanned labor
+AVG_PLANNED_REPAIR_HOURS = 4     # scheduled maintenance window, parts on hand
