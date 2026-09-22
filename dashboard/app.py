@@ -14,6 +14,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from src import data_access, oee
+from src.business_impact import add_expected_cost_column, expected_cost_avoided, fleet_risk_exposure
 from src.decision_layer import explain
 from src.feature_engineering import get_feature_table
 from src.ml.predict import predict_for_features
@@ -29,7 +30,7 @@ def load_dashboard_data():
     production = data_access.load_production_data()
 
     features = get_feature_table(group_col="MACHINE_ID")
-    predictions = predict_for_features(features, id_col="MACHINE_ID")
+    predictions = add_expected_cost_column(predict_for_features(features, id_col="MACHINE_ID"))
     oee_latest = oee.latest_oee_by_machine(production)
 
     summary = (
@@ -53,11 +54,17 @@ except FileNotFoundError as e:
 
 summary = summary.sort_values(by="RISK_CLASS", key=lambda s: s.map(RISK_ORDER))
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4, col5 = st.columns(5)
 col1.metric("Machines tracked", len(summary))
 col2.metric("Critical / High risk", int((summary["RISK_CLASS"].isin(["CRITICAL", "HIGH"])).sum()))
 col3.metric("Avg OEE", f"{summary['OEE'].mean():.0%}")
 col4.metric("Avg model confidence", f"{summary['CONFIDENCE_SCORE'].mean():.0%}")
+col5.metric("Est. fleet risk exposure", f"${fleet_risk_exposure(summary):,.0f}")
+st.caption(
+    "Risk exposure = expected downtime cost across the fleet if nothing is done "
+    "(P(failure) × cost gap between an emergency vs. scheduled repair). "
+    "Assumptions in config.py — not a measurement of any real site."
+)
 
 st.divider()
 
@@ -80,11 +87,12 @@ with right:
     feature_row = features[features["MACHINE_ID"] == selected_machine].iloc[0]
 
     st.subheader(f"{machine_row['MACHINE_NAME']} ({selected_machine})")
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("RUL (cycles)", f"{machine_row['RUL_PREDICTION']:.0f}")
     m2.metric("Risk", machine_row["RISK_CLASS"])
     m3.metric("Failure prob. (30cy)", f"{machine_row['FAILURE_PROBABILITY']:.0%}")
     m4.metric("Confidence", f"{machine_row['CONFIDENCE_SCORE']:.0%}")
+    m5.metric("Value of acting now", f"${machine_row['EXPECTED_COST_AVOIDED_USD']:,.0f}")
 
     sensor_history = sensors[sensors["MACHINE_ID"] == selected_machine]
     top_sensor = feature_row.filter(like="_SLOPE").abs().idxmax().replace("_SLOPE", "")
@@ -112,8 +120,32 @@ with right:
     for action_type, button_col in action_map.items():
         if button_col.button(action_type, key=f"{action_type}-{selected_machine}"):
             action_id = log_action(selected_machine, action_type, machine_row.to_dict())
-            st.success(f"{action_type} logged for {selected_machine} (action `{action_id[:8]}`).")
+            cost_avoided = expected_cost_avoided(machine_row["FAILURE_PROBABILITY"])
+            st.success(
+                f"{action_type} logged for {selected_machine} (action `{action_id[:8]}`) — "
+                f"est. ${cost_avoided:,.0f} in avoided downtime cost."
+            )
             st.cache_data.clear()
+
+if config.SNOWFLAKE_MODE == "snowflake":
+    st.divider()
+    st.subheader("Ask the fleet a question (Cortex Analyst)")
+    st.caption(
+        "Natural language over MACHINE_DATA / MAINTENANCE_HISTORY / PRODUCTION_DATA / "
+        "ACTION_OUTCOMES, via the Semantic View in sql/003_semantic_model.yaml."
+    )
+    question = st.text_input("Ask a question", placeholder="Which line has the worst OEE this month?")
+    if question:
+        from src.cortex_analyst import ask as ask_analyst
+
+        try:
+            result = ask_analyst(question)
+            st.write(result["answer"])
+            if result["sql"]:
+                with st.expander("Generated SQL"):
+                    st.code(result["sql"], language="sql")
+        except Exception as e:
+            st.warning(f"Cortex Analyst unavailable: {e}")
 
 st.divider()
 st.subheader("Outcome log (feedback loop)")

@@ -37,3 +37,20 @@ generated locally to complete the enterprise scenario:
 None of this synthetic data represents any real company, machine, or
 production line — it exists only to make the sensor data usable in a
 realistic enterprise data model.
+
+## Business-impact cost assumptions
+
+`src/business_impact.py` converts predictions into a dollar figure. One
+input is a cited industry benchmark; the rest are explicit, labeled
+assumptions, not measurements of any real site:
+
+- **`COST_PER_DOWNTIME_HOUR_USD` ($25,000)** — MaintainX's 2024 State of
+  Industrial Maintenance report, cited as the survey average cost of one
+  hour of unplanned downtime across manufacturers surveyed. (Other published
+  estimates range from ~$25K to $260K+/hour depending on industry and plant
+  scale — this project uses the conservative end.)
+- **`AVG_UNPLANNED_REPAIR_HOURS` (18) / `AVG_PLANNED_REPAIR_HOURS` (4)** —
+  not sourced from a study; editable parameters in `config.py` representing
+  a plausible gap between an emergency repair (parts sourcing, unplanned
+  labor) and a scheduled maintenance window (parts on hand). Change these
+  to match a real site's numbers if this were deployed for one.

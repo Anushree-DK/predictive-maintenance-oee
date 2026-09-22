@@ -30,6 +30,9 @@ which parts are real NASA sensor data vs. synthesized enterprise context.
 | Frontend | Streamlit |
 | Visualization | Plotly |
 | Agentic action | Python → `ACTION_OUTCOMES` (SQL write in Snowflake mode) |
+| Business impact | Python — predictions → estimated $ downtime cost avoided (`src/business_impact.py`) |
+| NL analytics | Cortex Analyst over a Semantic View (`src/cortex_analyst.py`) — built, not yet live-tested |
+| Testing | pytest — 22 unit tests over OEE, feature engineering, ML helpers, business impact |
 
 ## Status
 
@@ -79,6 +82,14 @@ Click a machine's agentic action buttons (Create Work Order / Schedule Repair
 / Recommend Parts) to see them logged to `data/mock/action_outcomes.csv` and
 appear in the "Outcome log" section — that's the feedback-loop stub.
 
+### Running the tests
+
+```bash
+python -m pytest tests/ -v
+```
+22 tests, no Snowflake/model-file dependency — pure-logic checks on OEE math,
+the feature-engineering slope formula, and the RUL/risk/confidence helpers.
+
 ## Switching to real Snowflake
 
 **Status: verified working, but against the wrong account.** The pipeline
@@ -125,19 +136,45 @@ templated reasoning (prefixed with `[Cortex unavailable: ...]` so it's
 obvious in the UI) instead of crashing the dashboard. Upgrading the account
 tier is enough to get real Cortex reasoning with no code changes.
 
+### Cortex Analyst (natural-language Q&A) — built, not yet verified live
+
+`src/cortex_analyst.py` + `sql/003_semantic_model.yaml` add an "Ask the fleet
+a question" panel (Snowflake mode only) using Cortex Analyst's REST API over
+a Semantic View. This was built from Snowflake's official docs but **has
+never been run against a live account** — no account with Cortex Analyst
+access has existed yet while building it. Three things to do once the right
+account exists:
+1. Create the Semantic View — see `sql/004_create_semantic_view.sql`
+   (Snowsight UI import is the reliable path; the SQL stored-procedure call
+   in that file is unverified).
+2. Confirm the role has `SNOWFLAKE.CORTEX_USER` or `SNOWFLAKE.CORTEX_ANALYST_USER`.
+3. Confirm the account's region supports Cortex Analyst natively, or has
+   cross-region inference enabled (`ALTER ACCOUNT SET
+   CORTEX_ENABLED_CROSS_REGION = 'ANY_REGION';` — ACCOUNTADMIN only). Native
+   regions: AWS ap-northeast-1/ap-southeast-2/us-east-1/us-west-2/eu-central-1/
+   eu-west-1, Azure East US 2/West Europe.
+
+If any of this is wrong or incomplete, the panel fails with a visible
+"Cortex Analyst unavailable: ..." message — same fail-safe pattern as
+`decision_layer.py` — rather than crashing the dashboard.
+
 ## Layout
 
 | Path | Diagram component |
 |---|---|
 | `sql/001_create_tables.sql` | Snowflake tables |
 | `sql/002_analysis_worksheet.sql` | Standalone business-question Worksheet — paste into Snowsight |
+| `sql/003_semantic_model.yaml`, `sql/004_create_semantic_view.sql` | Cortex Analyst Semantic View definition |
 | `scripts/generate_mock_data.py` | Stand-in for the data sources, until Snowflake is live |
 | `src/feature_engineering.py` | Feature Engineer (sensor trends, rolling stats, degradation) |
 | `src/oee.py` | OEE Calculation (availability, performance, quality) |
 | `src/ml/train.py`, `src/ml/predict.py` | ML Prediction (RUL, failure probability, risk, confidence) |
-| `src/decision_layer.py` | AI / Decision Layer (Cortex in Snowflake mode) |
+| `src/decision_layer.py` | AI / Decision Layer (Cortex COMPLETE in Snowflake mode) |
+| `src/cortex_analyst.py` | Natural-language Q&A over the business tables (Cortex Analyst) |
+| `src/business_impact.py` | Predictions → estimated $ downtime cost avoided |
 | `dashboard/app.py` | Unified Command Center + agentic actions |
 | `src/outcomes.py`, `src/data_access.py` | Outcome logging → `ACTION_OUTCOMES` feedback loop |
+| `tests/` | pytest unit tests (OEE, feature engineering, ML helpers, business impact) |
 
 ## Known simplifications (by design, not overbuilt)
 
@@ -167,9 +204,19 @@ consideration for Snowpark/Worksheets/Streamlit/Marketplace.
 - [x] Python
 - [x] Real dataset (NASA C-MAPSS) with sources documented — [DATA_SOURCES.md](DATA_SOURCES.md)
 - [x] Snowflake Worksheet — [sql/002_analysis_worksheet.sql](sql/002_analysis_worksheet.sql)
-- [ ] **CoCo CLI usage** — not yet done, required by judging criteria
+- [x] GitHub repository — https://github.com/Anushree-DK/predictive-maintenance-oee
+- [x] Unit tests (22, pytest) — signals engineering rigor beyond the minimum
+- [x] Business $-impact framing, not just ML metrics (`src/business_impact.py`)
+- [~] **CoCo CLI** — installed, connection-tested, confirmed blocked
+      specifically by account type (not tooling); not yet actually used to
+      build anything, since that needs the account below first
+- [~] **Cortex Analyst NL Q&A** — built (`src/cortex_analyst.py` + Semantic
+      View YAML), not yet live-tested — same account blocker
 - [ ] **Correct Snowflake account** — currently on a self-made trial, not the
       official Hack2Skill contest sign-up; Cortex/CoCo need the latter
+- [ ] **Snowflake Marketplace** — deliberately not started: acquiring a
+      listing on the wrong (soon-to-be-replaced) account wastes the effort;
+      revisit once the correct account is live
 - [ ] Presentation deck (PPT or similar) — required for submission
-- [ ] GitHub repository — code needs pushing once a remote exists
 - [ ] Team/participant profile submitted on Hack2Skill
+- [ ] Demo screenshot/GIF in this README

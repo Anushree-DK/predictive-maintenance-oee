@@ -1,0 +1,162 @@
+# Semantic model for Cortex Analyst — natural-language questions over the
+# business tables (not RAW_SENSOR_DATA, which is high-frequency telemetry and
+# a poor fit for NL Q&A; that's what src/feature_engineering.py + the ML model
+# are for). This describes MACHINE_DATA / MAINTENANCE_HISTORY / PRODUCTION_DATA
+# / ACTION_OUTCOMES so a plant manager can ask things like "which line has the
+# worst OEE this month" or "how many work orders did we create this week."
+#
+# Schema verified against Snowflake's current Semantic View YAML spec
+# (docs.snowflake.com/en/user-guide/views-semantic/semantic-view-yaml-spec).
+# NOT YET APPLIED to any Snowflake account — see sql/004_create_semantic_view.sql.
+
+name: PM_SEMANTIC_MODEL
+description: >
+  Predictive maintenance fleet: machines, their maintenance history,
+  production/OEE performance, and AI-recommended actions taken on them.
+
+tables:
+  - name: MACHINE
+    base_table:
+      database: PDM
+      schema: PUBLIC
+      table: MACHINE_DATA
+    primary_key:
+      columns: [MACHINE_ID]
+    dimensions:
+      - name: machine_id
+        expr: MACHINE_ID
+        data_type: VARCHAR
+        description: Unique identifier for the machine.
+      - name: machine_name
+        expr: MACHINE_NAME
+        data_type: VARCHAR
+        description: Human-readable machine name.
+      - name: line
+        expr: LINE
+        data_type: VARCHAR
+        description: Production line the machine belongs to.
+        synonyms: ["production line", "shop floor line"]
+      - name: model
+        expr: MODEL
+        data_type: VARCHAR
+        description: Machine model/type.
+    time_dimensions:
+      - name: install_date
+        expr: INSTALL_DATE
+        data_type: DATE
+        description: Date the machine was installed.
+
+  - name: MAINTENANCE
+    base_table:
+      database: PDM
+      schema: PUBLIC
+      table: MAINTENANCE_HISTORY
+    primary_key:
+      columns: [EVENT_ID]
+    dimensions:
+      - name: event_type
+        expr: EVENT_TYPE
+        data_type: VARCHAR
+        description: >
+          Type of maintenance event: PREVENTIVE, INSPECTION, or CORRECTIVE
+          (CORRECTIVE means an unplanned repair after something broke).
+      - name: description
+        expr: DESCRIPTION
+        data_type: VARCHAR
+    time_dimensions:
+      - name: event_date
+        expr: EVENT_DATE
+        data_type: DATE
+    facts:
+      - name: downtime_minutes
+        expr: DOWNTIME_MINUTES
+        data_type: NUMBER
+        description: Minutes of downtime caused by this maintenance event.
+
+  - name: PRODUCTION
+    base_table:
+      database: PDM
+      schema: PUBLIC
+      table: PRODUCTION_DATA
+    dimensions:
+      - name: shift
+        expr: SHIFT
+        data_type: VARCHAR
+        description: DAY or NIGHT shift.
+    time_dimensions:
+      - name: shift_date
+        expr: SHIFT_DATE
+        data_type: DATE
+    facts:
+      - name: planned_production_time_min
+        expr: PLANNED_PRODUCTION_TIME_MIN
+        data_type: NUMBER
+      - name: downtime_min
+        expr: DOWNTIME_MIN
+        data_type: NUMBER
+      - name: ideal_cycle_time_sec
+        expr: IDEAL_CYCLE_TIME_SEC
+        data_type: FLOAT
+      - name: total_count
+        expr: TOTAL_COUNT
+        data_type: NUMBER
+        description: Total units produced in the shift.
+      - name: good_count
+        expr: GOOD_COUNT
+        data_type: NUMBER
+        description: Units produced that passed quality checks.
+
+  - name: ACTION
+    base_table:
+      database: PDM
+      schema: PUBLIC
+      table: ACTION_OUTCOMES
+    primary_key:
+      columns: [ACTION_ID]
+    dimensions:
+      - name: action_type
+        expr: ACTION_TYPE
+        data_type: VARCHAR
+        description: >
+          CREATE_WORK_ORDER, SCHEDULE_REPAIR, or RECOMMEND_PARTS — the
+          agentic action the AI recommended and a human confirmed.
+      - name: risk_class_at_action
+        expr: RISK_CLASS_AT_ACTION
+        data_type: VARCHAR
+      - name: failure_occurred
+        expr: FAILURE_OCCURRED_FLAG
+        data_type: BOOLEAN
+        description: >
+          Whether the predicted failure actually happened afterward — NULL
+          means the outcome hasn't been recorded yet.
+    time_dimensions:
+      - name: recommended_at
+        expr: RECOMMENDED_AT
+        data_type: TIMESTAMP_NTZ
+    facts:
+      - name: rul_prediction_at_action
+        expr: RUL_PREDICTION_AT_ACTION
+        data_type: NUMBER
+      - name: confidence_at_action
+        expr: CONFIDENCE_AT_ACTION
+        data_type: FLOAT
+
+relationships:
+  - name: maintenance_to_machine
+    left_table: MAINTENANCE
+    right_table: MACHINE
+    relationship_columns:
+      - left_column: MACHINE_ID
+        right_column: MACHINE_ID
+  - name: production_to_machine
+    left_table: PRODUCTION
+    right_table: MACHINE
+    relationship_columns:
+      - left_column: MACHINE_ID
+        right_column: MACHINE_ID
+  - name: action_to_machine
+    left_table: ACTION
+    right_table: MACHINE
+    relationship_columns:
+      - left_column: MACHINE_ID
+        right_column: MACHINE_ID
