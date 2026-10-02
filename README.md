@@ -39,6 +39,45 @@ published true remaining life (`RUL_FD00X.txt`). Full numbers are in
   engines the model already saw. Cross-validation by engine gives 14.7, which agrees
   with the test set. Predicting the mean scores 44.7.
 
+## Business impact (backtest on all 709 real failures)
+
+`python -m src.ml.backtest` replays every failed C-MAPSS engine cycle by cycle.
+Each engine is scored by a model trained on the *other* four folds, so no engine is
+ever predicted by a model that saw it fail. Policy: pull an engine for maintenance
+when the lower bound of its RUL interval drops to 15 cycles (the CRITICAL class). A
+failure counts as caught only if the engine is pulled at least 10 cycles before it
+would have failed.
+
+| | Predictive (this model) | Best fixed-interval schedule, same catch rate |
+|---|---|---|
+| Failures caught in time | **708 / 709 (99.9%)** | 705 / 709 |
+| Median warning | 21 cycles | 87 cycles |
+| Engine life used before maintenance | **88.7%** | 57.4% |
+| Shop visits per 100k flight cycles | **495** | 826 (**40% more**) |
+
+The fixed-interval baseline is generous: each fleet gets the single overhaul age
+that would have caught the same share of failures, chosen with hindsight from that
+fleet's own failure ages. The full trade-off curve is in `reports/backtest_curve.csv`
+and on the dashboard.
+
+## Maintenance scheduling and explanations
+
+- **Shop plan** (`src/scheduler.py`): which engines to service in which shop slot,
+  given limited capacity. It is solved exactly as a MILP over each engine's RUL
+  distribution. A slot goes to an engine only when servicing it then is worth more
+  than the risk of leaving it. Engines likely to fail before any slot is free are
+  flagged **ground now** instead of taking up a slot. On today's fleet, with 10
+  engines per slot over 6 slots, expected downtime cost is **$5.8M (9%) lower than
+  filling slots worst-first**. The RUL distribution is a normal approximation built
+  from the conformal interval. On NASA's test engines its implied 30-cycle failure
+  probability has a Brier score of 0.032, against 0.027 for the dedicated
+  classifier (`python -m src.scheduler`).
+- **SHAP** (`src/ml/explain.py`): exact TreeExplainer contributions of each sensor to
+  each engine's predicted RUL, in cycles. They add up exactly to the prediction. The
+  registered model exposes them as a second method (`explain`), and `SCORE_FLEET()`
+  writes them to `ENGINE_RUL_DRIVERS`, so the explanations are computed inside
+  Snowflake too.
+
 ## How it works
 
 Sensor and maintenance data go into Snowflake. Feature engineering normalises each
@@ -62,7 +101,7 @@ feed back into Snowflake.
 | NL analytics | Cortex Analyst over a Semantic View (`src/cortex_analyst.py`) |
 | Business impact | Calibrated P(failure) → expected downtime cost avoided (`src/business_impact.py`) |
 | Frontend | Streamlit + Plotly |
-| Testing | pytest, 37 tests |
+| Testing | pytest, 47 tests |
 
 `SNOWFLAKE_MODE` in `.env` switches the backend without changing pipeline code (see
 `src/data_access.py`):
@@ -97,9 +136,9 @@ Parts) logs a row to `ACTION_OUTCOMES`, which appears in the dashboard's outcome
 python -m pytest tests/ -v
 ```
 
-The 37 tests cover the C-MAPSS → table derivation, the OEE formula, causal rolling
+The 47 tests cover the C-MAPSS → table derivation, the OEE formula, causal rolling
 features, pandas-vs-SQL feature parity (on DuckDB), conformal intervals, the risk
-classes, the NASA scoring function, agent-response parsing and business impact.
+classes, the NASA scoring function, agent-response parsing, the backtest policies, the shop scheduler and business impact.
 
 ## Running on Snowflake
 
@@ -161,6 +200,9 @@ Deploy: `python scripts/deploy_snowflake.py knowledge` then `... agent`.
 | `src/ml/train.py`, `src/ml/predict.py` | RUL, interval, failure probability, risk; evaluation |
 | `src/snowflake_pipeline.py`, `src/ml/registry_model.py`, `scripts/deploy_snowflake.py` | In-Snowflake training, Model Registry, scoring procedure + task |
 | `reports/model_metrics.json` | Latest evaluation on NASA's test set |
+| `src/ml/backtest.py`, `reports/backtest.json` | Out-of-fold replay of all real failures vs. fixed-interval maintenance |
+| `src/scheduler.py` | Capacity-constrained shop schedule (MILP) |
+| `src/ml/explain.py` | Per-sensor SHAP contributions |
 | `src/decision_layer.py` | Per-engine diagnosis (Cortex Search + AI_COMPLETE) |
 | `src/cortex_analyst.py` | Natural-language Q&A |
 | `sql/005_knowledge_base.sql` | NASA docs → chunks → Cortex Search |
@@ -188,7 +230,7 @@ Snowpark, Worksheets, Streamlit and Marketplace.
 - [x] 100% real data (NASA C-MAPSS), with derivations documented in [DATA_SOURCES.md](DATA_SOURCES.md)
 - [x] Model evaluated on NASA's official test set, with engine-level splits and calibrated uncertainty
 - [x] Snowflake Worksheet: [sql/002_analysis_worksheet.sql](sql/002_analysis_worksheet.sql)
-- [x] Unit tests (37, pytest)
+- [x] Unit tests (47, pytest)
 - [x] Business $-impact framing (`src/business_impact.py`)
 - [x] **Contest Snowflake account** live, Cortex verified
 - [x] Training, Model Registry and event-driven scoring inside Snowflake (stored procedures, Stream + Task)

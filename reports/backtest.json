@@ -1,0 +1,32 @@
+{
+  "method": "5-fold out-of-fold replay of all 709 real run-to-failure engines; a failure counts as caught if the engine is pulled at least 10 cycles before it fails.",
+  "headline_policy": "pull an engine when its RUL lower bound <= 15 cycles (CRITICAL)",
+  "predictive": {
+    "engines": 709,
+    "failures_caught": 708,
+    "catch_rate": 0.9986,
+    "unplanned_failures": 1,
+    "median_warning_cycles": 21.0,
+    "mean_life_left_unused_cycles": 24.3,
+    "mean_share_of_life_used": 0.8866,
+    "shop_visits_per_100k_cycles": 495.3
+  },
+  "fixed_interval_same_catch_rate": {
+    "engines": 709,
+    "failures_caught": 705,
+    "catch_rate": 0.9944,
+    "unplanned_failures": 4,
+    "median_warning_cycles": 86.95840000000004,
+    "mean_life_left_unused_cycles": 105.6,
+    "mean_share_of_life_used": 0.5744,
+    "shop_visits_per_100k_cycles": 825.6
+  },
+  "life_left_unused_reduction": 0.77,
+  "shop_visit_reduction": 0.4,
+  "downtime_cost_usd": {
+    "run_to_failure": 319050000,
+    "predictive": 71250000,
+    "fixed_interval_same_catch_rate": 72300000
+  },
+  "cost_assumptions": "config.py: $/downtime hour and planned/unplanned repair hours"
+}

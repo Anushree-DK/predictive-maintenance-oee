@@ -101,3 +101,8 @@ COST_PER_DOWNTIME_HOUR_USD = 25_000
 AVG_UNPLANNED_REPAIR_HOURS = 18  # emergency repair: parts sourcing, unplanned labor
 AVG_PLANNED_REPAIR_HOURS = 4     # scheduled maintenance window, parts on hand
 HOURS_PER_CYCLE = 2.0            # one C-MAPSS cycle is one flight; assumed average duration
+
+# Maintenance scheduling (src/scheduler.py) — planning assumptions, adjustable in the dashboard.
+SHOP_SLOT_CYCLES = 5          # one shop slot every 5 cycles
+PLANNING_HORIZON_SLOTS = 6    # plan 6 slots (30 cycles) ahead
+SHOP_CAPACITY_PER_SLOT = 10   # engines the shop can take per slot

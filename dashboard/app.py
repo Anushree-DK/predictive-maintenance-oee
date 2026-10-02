@@ -47,6 +47,32 @@ def load_dashboard_data():
     return summary, features, oee.oee_by_fleet(periods, machines), metrics, model_label
 
 
+@st.cache_data(ttl=60)
+def load_rul_drivers(machine_id: str) -> pd.DataFrame:
+    """Per-sensor SHAP contributions to this engine's predicted RUL."""
+    if config.SNOWFLAKE_MODE == "snowflake":
+        from src.connection import get_session
+
+        return get_session().sql(
+            "SELECT * FROM ENGINE_RUL_DRIVERS WHERE MACHINE_ID = ?", params=[machine_id]
+        ).to_pandas()
+    from src.ml.explain import sensor_contributions, to_long
+
+    row = features[features["MACHINE_ID"] == machine_id]
+    return to_long(row["MACHINE_ID"], sensor_contributions(load_model(), row))
+
+
+@st.cache_data
+def load_backtest():
+    import json
+
+    return json.loads((config.REPORTS_DIR / "backtest.json").read_text()), pd.read_csv(config.REPORTS_DIR / "backtest_curve.csv")
+
+
+# Reference palette (dataviz skill): categorical slots 1-2, diverging blue <-> red.
+SERIES_1, SERIES_2 = "#2a78d6", "#eb6834"
+RAISES_RUL, LOWERS_RUL = "#2a78d6", "#e34948"
+
 RISK_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 RISK_COLOR = {"CRITICAL": "#d62728", "HIGH": "#ff7f0e", "MEDIUM": "#f2c744", "LOW": "#2ca02c"}
 
@@ -99,6 +125,48 @@ with st.expander("How accurate is the model? (evaluated on NASA's held-out test 
         f"the model already saw. Predicting the mean scores {metrics['baselines']['constant_mean_rul_rmse']:.1f}."
     )
 
+try:
+    backtest, backtest_curve = load_backtest()
+except FileNotFoundError:
+    backtest = None
+if backtest:
+    st.subheader("Business impact — backtest on all 709 real engine failures")
+    predictive, fixed = backtest["predictive"], backtest["fixed_interval_same_catch_rate"]
+    b1, b2, b3, b4 = st.columns(4)
+    b1.metric("Failures caught in time", f"{predictive['catch_rate']:.1%}",
+              f"{predictive['failures_caught']} of {predictive['engines']}", delta_color="off")
+    b2.metric("Shop visits vs. fixed interval", f"−{backtest['shop_visit_reduction']:.0%}",
+              f"{predictive['shop_visits_per_100k_cycles']:.0f} vs {fixed['shop_visits_per_100k_cycles']:.0f} per 100k cycles",
+              delta_color="off")
+    b3.metric("Engine life used", f"{predictive['mean_share_of_life_used']:.1%}",
+              f"vs {fixed['mean_share_of_life_used']:.1%} fixed interval", delta_color="off")
+    b4.metric("Median warning", f"{predictive['median_warning_cycles']:.0f} cycles", "before failure", delta_color="off")
+    with st.expander("How this was measured, and the trade-off curve"):
+        st.caption(
+            backtest["method"] + " Policy: " + backtest["headline_policy"] + ". The fixed-interval baseline overhauls "
+            "each fleet at the single age that catches the same share of failures, chosen with hindsight from that "
+            "fleet's own failure ages — so it is a generous baseline."
+        )
+        curve = backtest_curve.melt(
+            id_vars=["RUL_LOWER_THRESHOLD", "CATCH_RATE"],
+            value_vars=["PREDICTIVE_SHARE_OF_LIFE_USED", "FIXED_INTERVAL_SHARE_OF_LIFE_USED"],
+            var_name="POLICY", value_name="SHARE_OF_LIFE_USED",
+        ).replace({"PREDICTIVE_SHARE_OF_LIFE_USED": "Predictive (this model)",
+                   "FIXED_INTERVAL_SHARE_OF_LIFE_USED": "Fixed interval, same catch rate"})
+        fig = px.line(
+            curve, x="RUL_LOWER_THRESHOLD", y="SHARE_OF_LIFE_USED", color="POLICY", markers=True,
+            hover_data={"CATCH_RATE": ":.1%", "SHARE_OF_LIFE_USED": ":.1%"},
+            color_discrete_sequence=[SERIES_1, SERIES_2],
+            labels={"RUL_LOWER_THRESHOLD": "Pull engine when RUL lower bound ≤ (cycles)",
+                    "SHARE_OF_LIFE_USED": "Share of engine life used", "POLICY": "", "CATCH_RATE": "Failures caught"},
+            title="Engine life used before maintenance, at each trigger threshold",
+        )
+        fig.update_traces(line_width=2, marker_size=8)
+        fig.update_yaxes(tickformat=".0%")
+        fig.update_layout(legend=dict(orientation="h", y=-0.25), hovermode="x unified")
+        st.plotly_chart(fig, width="stretch")
+        st.dataframe(backtest_curve, hide_index=True)
+
 st.divider()
 
 left, right = st.columns([2, 3])
@@ -144,6 +212,24 @@ with right:
     )
     st.plotly_chart(fig, width="stretch")
 
+    drivers = load_rul_drivers(selected_machine)
+    if not drivers.empty:
+        top = drivers.reindex(drivers["CONTRIBUTION_CYCLES"].abs().sort_values(ascending=False).index).head(6)
+        top = top.assign(
+            LABEL=top["SOURCE"] + " · " + top["DESCRIPTION"].str.split(" — ").str[0],
+            EFFECT=top["CONTRIBUTION_CYCLES"].map(lambda v: "Lowers predicted RUL" if v < 0 else "Raises predicted RUL"),
+        ).iloc[::-1]
+        fig = px.bar(
+            top, x="CONTRIBUTION_CYCLES", y="LABEL", orientation="h", color="EFFECT",
+            color_discrete_map={"Lowers predicted RUL": LOWERS_RUL, "Raises predicted RUL": RAISES_RUL},
+            hover_data={"DESCRIPTION": True, "CONTRIBUTION_CYCLES": ":.1f", "LABEL": False, "EFFECT": False},
+            labels={"CONTRIBUTION_CYCLES": "Contribution to predicted RUL (cycles)", "LABEL": "", "EFFECT": ""},
+            title=f"What drives this prediction (SHAP) — fleet baseline {drivers['BASE_RUL'].iloc[0]:.0f} cycles",
+        )
+        fig.update_traces(marker_cornerradius=4)
+        fig.update_layout(legend=dict(orientation="h", y=-0.3), bargap=0.35)
+        st.plotly_chart(fig, width="stretch")
+
     st.markdown("**AI / Decision layer**")
     reasoning = explain(selected_machine, machine_row.to_dict(), feature_row)
     st.write(f"- **Why it will fail:** {reasoning['why']}")
@@ -172,6 +258,35 @@ with right:
                 f"est. ${cost_avoided:,.0f} in avoided downtime cost."
             )
             st.cache_data.clear()
+
+st.divider()
+st.subheader("Shop plan — which engines to service, and when")
+from src.scheduler import optimize_schedule
+
+p1, p2 = st.columns(2)
+capacity = p1.slider("Shop capacity (engines per slot)", 1, 40, config.SHOP_CAPACITY_PER_SLOT)
+n_slots = p2.slider(f"Slots to plan (one every {config.SHOP_SLOT_CYCLES} cycles)", 1, 12, config.PLANNING_HORIZON_SLOTS)
+plan = optimize_schedule(summary, capacity=capacity, n_slots=n_slots)
+s1, s2, s3, s4 = st.columns(4)
+s1.metric("Ground now", len(plan["ground_now"]), "likely to fail before the first slot", delta_color="off")
+s2.metric("Engines scheduled", len(plan["schedule"]), f"of {plan['capacity_total']} slots available", delta_color="off")
+s3.metric("Expected downtime cost, optimized", f"${plan['expected_cost_optimized'] / 1e6:,.1f}M",
+          f"−${(plan['expected_cost_worst_first'] - plan['expected_cost_optimized']) / 1e6:,.1f}M vs worst-first",
+          delta_color="inverse")
+s4.metric("If nothing is scheduled", f"${plan['expected_cost_do_nothing'] / 1e6:,.1f}M")
+st.caption(
+    "Exact MILP (scipy) over each engine's RUL distribution: a slot is spent on an engine only when servicing it "
+    "then is worth more than the risk of leaving it, and engines that will likely fail before any slot are flagged "
+    "to ground instead. Worst-first = fill slots in order of lowest predicted RUL. Costs use config.py's assumptions."
+)
+g, sch = st.columns([1, 2])
+g.markdown("**Ground now**")
+g.dataframe(plan["ground_now"], hide_index=True, height=300)
+sch.markdown("**Shop schedule**")
+sch.dataframe(
+    plan["schedule"].style.format({"P_FAIL_BEFORE_SERVICE": "{:.0%}", "EXPECTED_SAVING_USD": "${:,.0f}"}),
+    hide_index=True, height=300,
+)
 
 st.divider()
 st.subheader("OEE by fleet (lifetime, all engines incl. failed)")

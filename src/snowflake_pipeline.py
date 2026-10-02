@@ -6,7 +6,8 @@
                      records them in MODEL_METRICS.
 - SCORE_FLEET()      Python stored procedure: computes current features for the
                      in-service fleet in SQL, scores them with the registry's default
-                     RUL_MODEL version, and writes ENGINE_FEATURES / FLEET_PREDICTIONS.
+                     RUL_MODEL version, and writes ENGINE_FEATURES / FLEET_PREDICTIONS /
+                     ENGINE_RUL_DRIVERS (per-sensor SHAP contributions).
 - SCORE_FLEET_TASK   Runs SCORE_FLEET() whenever RAW_SENSOR_STREAM (a stream on
                      RAW_SENSOR_DATA) has new readings; idle otherwise.
 - RETRAIN_TASK       Weekly TRAIN_RUL_MODEL(); created suspended.
@@ -64,6 +65,7 @@ def train_procedure(session: Session) -> str:
     from datetime import datetime, timezone
 
     import joblib
+    import shap
     import sklearn
     from snowflake.ml.model import custom_model
 
@@ -85,7 +87,9 @@ def train_procedure(session: Session) -> str:
         model_name=MODEL_NAME,
         version_name=version,
         sample_input_data=test[bundle["feature_columns"]].head(50),
-        conda_dependencies=[f"scikit-learn=={sklearn.__version__}", "pandas", "numpy", f"joblib=={joblib.__version__}"],
+        conda_dependencies=[
+            f"scikit-learn=={sklearn.__version__}", "pandas", "numpy", f"joblib=={joblib.__version__}", f"shap=={shap.__version__}",
+        ],
         code_paths=_code_paths(),
         metrics=metrics,
         comment=(
@@ -130,6 +134,14 @@ def score_procedure(session: Session) -> str:
     predictions.write.save_as_table("FLEET_PREDICTIONS", mode="truncate")
     engines = session.table("FLEET_PREDICTIONS").count()
 
+    if "EXPLAIN" in {f["name"].upper() for f in version.show_functions()}:
+        from src.ml.explain import to_long
+
+        explained = version.run(features, function_name="explain").to_pandas()
+        shap_cols = [c for c in explained.columns if c.startswith("SHAP_") or c == "BASE_RUL"]
+        drivers = to_long(explained["MACHINE_ID"], explained[shap_cols])
+        session.write_pandas(drivers, "ENGINE_RUL_DRIVERS", auto_create_table=True, overwrite=True)
+
     # Reading the stream inside DML advances its offset, so the task goes idle again.
     session.sql(
         "INSERT INTO SCORING_RUNS (RUN_AT, NEW_SENSOR_ROWS, ENGINES_SCORED, MODEL_VERSION) "
@@ -166,6 +178,7 @@ TASK_SQL = [
 # here produces a model whose dependencies the warehouse can't install.
 PROCEDURE_PACKAGES = [
     "snowflake-snowpark-python", "snowflake-ml-python==2.2.0", "scikit-learn==1.9.1", "pandas", "numpy", "joblib==1.5.3",
+    "shap==0.51.0",
 ]
 
 
