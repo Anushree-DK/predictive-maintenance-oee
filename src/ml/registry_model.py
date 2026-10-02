@@ -1,7 +1,4 @@
-"""Snowflake Model Registry wrapper around the trained bundle (src/ml/train.py), so
-the fleet is scored inside Snowflake by the registered model rather than by a local
-joblib file. Logged by src/snowflake_pipeline.py::train_procedure.
-"""
+"""Model Registry wrapper exposing predict and explain."""
 
 import joblib
 import pandas as pd

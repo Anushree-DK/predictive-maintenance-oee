@@ -1,12 +1,4 @@
-"""OEE = Availability x Performance x Quality, adapted to a fleet of engines and
-computed per OPERATING_PERIODS row (src/cmapss.py::operating_periods):
-
-- Availability: flight hours / (flight hours + unplanned repair downtime). A period
-  in which the engine failed carries AVG_UNPLANNED_REPAIR_HOURS of downtime.
-- Performance: the period's average health index — the fraction of healthy-engine
-  performance retained, learned from the real run-to-failure trajectories.
-- Quality: the share of cycles flown with every informative sensor in spec.
-"""
+"""OEE per operating period: availability x performance (health index) x quality (in-spec share)."""
 
 import pandas as pd
 

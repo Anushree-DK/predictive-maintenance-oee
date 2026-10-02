@@ -1,7 +1,4 @@
-"""Loads the trained models (src/ml/train.py) and turns current machine features into
-the outputs the dashboard and decision layer use: point RUL, a calibrated RUL
-interval, a calibrated failure probability, and a risk class.
-"""
+"""Turns features into RUL, prediction interval, failure probability and risk class."""
 
 from __future__ import annotations
 

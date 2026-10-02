@@ -1,7 +1,4 @@
-"""Human approval of the work orders MAINTENANCE_AGENT drafts. Approving one logs it
-to ACTION_OUTCOMES with the prediction the agent saw when drafting it, which feeds
-the outcome log (the feedback loop). The agent itself can never approve.
-"""
+"""Approve or reject work orders drafted by the agent."""
 
 import pandas as pd
 

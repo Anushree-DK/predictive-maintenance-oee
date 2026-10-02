@@ -1,15 +1,6 @@
-"""Deploys the project to Snowflake (SNOWFLAKE_MODE=snowflake, credentials in .env).
+"""Deploy to Snowflake.
 
-    python scripts/deploy_snowflake.py tables     # create tables, load data/processed/*.csv
-    python scripts/deploy_snowflake.py pipeline   # register procs, train in Snowflake, start scoring task
-    python scripts/deploy_snowflake.py procedures # same, without retraining (code changes only)
-    python scripts/deploy_snowflake.py knowledge  # NASA docs -> chunks -> Cortex Search service
-    python scripts/deploy_snowflake.py agent      # semantic view, work orders, Cortex Agent
-    python scripts/deploy_snowflake.py replay     # live-replay procedures (demo)
-    python scripts/deploy_snowflake.py all
-
-Run scripts/load_cmapss.py first so data/processed/ exists.
-"""
+Usage: python scripts/deploy_snowflake.py {tables|pipeline|procedures|knowledge|agent|replay|all}"""
 
 from __future__ import annotations
 
@@ -62,8 +53,7 @@ def deploy_knowledge(session) -> None:
 
 
 def deploy_agent(session) -> None:
-    # WORK_ORDERS (created here) must exist before the semantic view that references it;
-    # the agent resolves the view by name only when it runs.
+    # WORK_ORDERS must exist before the semantic view is created
     sensor_reference = pd.DataFrame(
         [(sensor, *text.split(" — ", 1)) for sensor, text in config.SENSOR_DESCRIPTIONS.items()],
         columns=["SENSOR", "SYMBOL", "DESCRIPTION"],

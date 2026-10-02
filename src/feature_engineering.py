@@ -1,11 +1,4 @@
-"""Turns raw per-cycle sensor readings into model features: each sensor is z-scored
-against its operating regime (src/cmapss.py::zscore_by_regime), then summarized over
-a rolling window as mean, std, least-squares slope, and latest value.
-
-The same features exist in two implementations that must agree: pandas
-(build_feature_history) and Snowflake SQL window functions (build_feature_sql).
-tests/test_feature_engineering.py checks them against each other.
-"""
+"""Regime-normalized rolling sensor features, in pandas and as equivalent Snowflake SQL."""
 
 from __future__ import annotations
 
@@ -66,13 +59,9 @@ def build_feature_sql(
     where: str | None = None,
     latest_only: bool = True,
 ) -> str:
-    """The same features as build_feature_history, as one SQL query.
+    """SQL version of build_feature_history.
 
-    The slope is the closed-form least-squares formula rather than REGR_SLOPE:
-    Snowflake's regression window functions only support unbounded frames, not a
-    bounded rolling window, so it's expanded from SUM()/COUNT() aggregates, which do.
-    Population std is expanded the same way, to match pandas exactly.
-    """
+    Slope and std are expanded from SUM/COUNT since Snowflake's regression window functions need unbounded frames."""
     window = f"PARTITION BY {group_col} ORDER BY TIME_CYCLE ROWS BETWEEN {ROLLING_WINDOW - 1} PRECEDING AND CURRENT ROW"
     n = f"COUNT(*) OVER ({window})"
     sum_x = f"SUM(TIME_CYCLE) OVER ({window})"

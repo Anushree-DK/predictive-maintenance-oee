@@ -1,8 +1,4 @@
-"""Single read/write interface over either the local processed C-MAPSS CSVs or the
-same tables in Snowflake, selected by SNOWFLAKE_MODE. Every other module in src/
-goes through this file instead of touching files or Snowpark directly, so swapping
-backends doesn't change pipeline code.
-"""
+"""Reads and writes the project tables from local CSVs or Snowflake, based on SNOWFLAKE_MODE."""
 
 from __future__ import annotations
 

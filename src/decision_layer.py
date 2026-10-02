@@ -1,12 +1,4 @@
-"""Answers four questions per engine: why will it fail, what's causing the
-degradation, what should we do, how certain are we.
-
-In snowflake mode: Cortex Search retrieves the most relevant passages of the NASA
-C-MAPSS documentation (sql/005_knowledge_base.sql), and AI_COMPLETE writes the
-answer as schema-validated JSON grounded in those passages, with page citations.
-In local mode — or if Cortex fails — a template fills the same four fields from
-the same real prediction and feature values.
-"""
+"""Per-engine diagnosis: Cortex Search over the NASA docs plus AI_COMPLETE, with a template fallback."""
 
 import json
 
@@ -152,8 +144,7 @@ def explain(machine_id, prediction_row, feature_row) -> dict:
         try:
             return _cortex_reasoning(machine_id, prediction_row, feature_row)
         except Exception as e:
-            # Cortex isn't available on every account tier or region — fall back rather
-            # than break the dashboard. The template still uses this engine's real data.
+            # fall back if Cortex isn't available
             reasoning = _template_reasoning(machine_id, prediction_row, feature_row)
             reasoning["source"] = f"template (Cortex unavailable: {e})"
             return reasoning

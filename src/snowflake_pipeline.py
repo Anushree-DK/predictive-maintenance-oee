@@ -1,19 +1,4 @@
-"""The in-Snowflake ML pipeline: training, model registry, and event-driven scoring.
-
-- TRAIN_RUL_MODEL()  Python stored procedure: trains on the failed engines, evaluates
-                     on NASA's test set, logs the model to the Snowflake Model Registry
-                     as RUL_MODEL (new version, made default) with its metrics, and
-                     records them in MODEL_METRICS.
-- SCORE_FLEET()      Python stored procedure: computes current features for the
-                     in-service fleet in SQL, scores them with the registry's default
-                     RUL_MODEL version, and writes ENGINE_FEATURES / FLEET_PREDICTIONS /
-                     ENGINE_RUL_DRIVERS (per-sensor SHAP contributions).
-- SCORE_FLEET_TASK   Runs SCORE_FLEET() whenever RAW_SENSOR_STREAM (a stream on
-                     RAW_SENSOR_DATA) has new readings; idle otherwise.
-- RETRAIN_TASK       Weekly TRAIN_RUL_MODEL(); created suspended.
-
-Deployed by: python scripts/deploy_snowflake.py pipeline
-"""
+"""Snowflake procedures and tasks: TRAIN_RUL_MODEL, SCORE_FLEET, SCORE_FLEET_TASK, RETRAIN_TASK."""
 
 import json
 import os
@@ -181,9 +166,7 @@ TASK_SQL = [
         AS CALL TRAIN_RUL_MODEL()""",
 ]
 
-# Pinned to what Snowflake's package channel serves: the registry derives the model's
-# serving dependencies from the training environment, so an unpinned (newer) build
-# here produces a model whose dependencies the warehouse can't install.
+# pinned to versions in Snowflake's package channel
 PROCEDURE_PACKAGES = [
     "snowflake-snowpark-python", "snowflake-ml-python==2.2.0", "scikit-learn==1.9.1", "pandas", "numpy", "joblib==1.5.3",
     "shap==0.51.0",
@@ -194,8 +177,7 @@ def register_procedures(session) -> None:
     from snowflake.snowpark.types import StringType
 
     root = config.ROOT_DIR
-    # Snowpark reuses an already-staged import zip rather than re-uploading changed
-    # code, so clear the stage to make the procedures run the current source.
+    # clear the stage so changed code gets re-uploaded
     session.sql(f"REMOVE @{CODE_STAGE}").collect()
     for func, name in ((train_procedure, "TRAIN_RUL_MODEL"), (score_procedure, "SCORE_FLEET")):
         session.sproc.register(

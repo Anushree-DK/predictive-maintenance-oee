@@ -1,21 +1,6 @@
-"""Trains the RUL models on the failed engines' run-to-failure histories and
-evaluates them on NASA's official C-MAPSS test set (the in-service fleet, scored
-against RUL_FD00X.txt). Writes models/rul_model.joblib and reports/model_metrics.json.
+"""Trains the RUL models on failed engines and evaluates them on NASA's test set.
 
-Three models, all HistGradientBoosting (no native-library dependency):
-- point RUL: squared-error regressor on the RUL label capped at config.RUL_CAP;
-- RUL interval: 5%/95% quantile regressors, widened by split-conformal calibration
-  (conformalized quantile regression) so the interval's coverage is checked on
-  held-out engines rather than assumed;
-- failure probability: classifier for "fails within FAILURE_HORIZON_CYCLES",
-  isotonic-calibrated on held-out engines, so 0.3 means about 30% of such engines fail.
-
-Every split is by engine (a whole trajectory goes to one side), never by row: rows
-of one engine are near-duplicates, and a row split lets the model memorize engines
-it is then "tested" on. evaluate() reports how much that inflates the score.
-
-    python -m src.ml.train
-"""
+Usage: python -m src.ml.train"""
 
 from __future__ import annotations
 
@@ -45,8 +30,7 @@ CONFORMAL_BAND_EDGES = [30, 60, 100]  # bands of predicted RUL, in cycles
 SEED = 42
 
 REGRESSOR_PARAMS = dict(max_iter=500, learning_rate=0.05, max_leaf_nodes=31, min_samples_leaf=50, l2_regularization=1.0)
-# Quantile loss has sign-only gradients and converges slowly; these settings give
-# intervals ~40% narrower near failure than REGRESSOR_PARAMS at the same coverage.
+# quantile loss converges slowly, so these use more trees
 QUANTILE_PARAMS = dict(max_iter=1500, learning_rate=0.1, max_leaf_nodes=63, min_samples_leaf=20)
 
 
@@ -94,9 +78,7 @@ def fit_models(train: pd.DataFrame) -> dict:
 
     lower = _regressor(loss="quantile", quantile=alpha / 2, **QUANTILE_PARAMS).fit(fit[cols], fit["RUL"])
     upper = _regressor(loss="quantile", quantile=1 - alpha / 2, **QUANTILE_PARAMS).fit(fit[cols], fit["RUL"])
-    # Conformalized quantile regression, Mondrian-style: one margin per band of the
-    # point prediction, so engines near failure are calibrated against other engines
-    # near failure instead of being averaged in with the (far more numerous) healthy ones.
+    # conformal margin per band of predicted RUL
     cal_point = point_fit.predict(cal[cols])
     scores = np.maximum(lower.predict(cal[cols]) - cal["RUL"], cal["RUL"] - upper.predict(cal[cols]))
     bands = np.digitize(cal_point, CONFORMAL_BAND_EDGES)
@@ -171,8 +153,7 @@ def evaluate(bundle: dict, train: pd.DataFrame, test: pd.DataFrame) -> dict:
             for i, label in enumerate(labels)
         }
 
-    # Conformal calibration guarantees coverage per band of the *prediction* (what an
-    # operator sees); per band of the unknown truth is reported too, as the harder test.
+    # coverage by predicted band and by true band
     by_predicted_band = coverage_by(np.digitize(test["RUL_PREDICTION"], bundle["conformal_band_edges"]))
     by_true_band = coverage_by(np.digitize(truth_capped, bundle["conformal_band_edges"]))
 

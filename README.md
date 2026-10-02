@@ -1,8 +1,5 @@
 # Predictive Maintenance & OEE Command Center
 
-Built for the [Snowflake CoCo CLI Hackathon 2026 — GCC Edition](https://hack2skill.com/event/cococlihack-gccedition/),
-problem statement 3: **"Predictive Maintenance and OEE Command Center."**
-
 **The problem**: operators lose value to unplanned downtime because sensor (OT) data
 sits apart from maintenance and operations (IT) context. This project brings both
 together in Snowflake. It predicts when each engine will fail, says how sure it is,
@@ -142,9 +139,8 @@ classes, the NASA scoring function, agent-response parsing, the backtest policie
 
 ## Running on Snowflake
 
-**Status: live.** The project is deployed to the contest account (AWS
-ap-southeast-7, Cortex cross-region inference enabled). Training, model
-versioning and scoring all run inside Snowflake:
+Training, model versioning and scoring all run inside Snowflake (Cortex
+cross-region inference enabled):
 
 | Object | What it does |
 |---|---|
@@ -229,22 +225,3 @@ Deploy: `python scripts/deploy_snowflake.py knowledge` then `... agent`.
 - The feedback loop logs outcomes but does not retrain yet.
 - Approved work orders log to `ACTION_OUTCOMES`. They are not wired to a real CMMS.
 - Cost rates are assumptions (see DATA_SOURCES.md).
-
-## Hackathon submission checklist
-
-Judging criteria per T&C §9: a theme-responsive prototype that uses Cortex Code CLI,
-Python/Java/Scala and the Snowflake platform, with special consideration for
-Snowpark, Worksheets, Streamlit and Marketplace.
-
-- [x] Problem statement 3 (Predictive Maintenance and OEE Command Center)
-- [x] Working end-to-end prototype: Streamlit dashboard
-- [x] 100% real data (NASA C-MAPSS), with derivations documented in [DATA_SOURCES.md](DATA_SOURCES.md)
-- [x] Model evaluated on NASA's official test set, with engine-level splits and calibrated uncertainty
-- [x] Snowflake Worksheet: [sql/002_analysis_worksheet.sql](sql/002_analysis_worksheet.sql)
-- [x] Unit tests (47, pytest)
-- [x] Business $-impact framing (`src/business_impact.py`)
-- [x] **Contest Snowflake account** live, Cortex verified
-- [x] Training, Model Registry and event-driven scoring inside Snowflake (stored procedures, Stream + Task)
-- [x] Cortex Agent + Cortex Search + Cortex Analyst, all live, with human approval of agent actions
-- [ ] CoCo CLI used in the build
-- [ ] Presentation deck, demo video/GIF, Hack2Skill profile

@@ -1,12 +1,4 @@
-# Semantic model for Cortex Analyst — natural-language questions over the
-# business tables (not RAW_SENSOR_DATA, which is per-cycle telemetry and a poor
-# fit for NL Q&A; that's what src/feature_engineering.py + the ML model are for).
-# Lets a fleet manager ask things like "which fleet has the worst OEE" or "how many
-# work orders did we create this week".
-#
-# Schema follows Snowflake's Semantic View YAML spec
-# (docs.snowflake.com/en/user-guide/views-semantic/semantic-view-yaml-spec).
-# Applied by `python scripts/deploy_snowflake.py agent` (see sql/004_create_semantic_view.sql).
+# Semantic view for Cortex Analyst
 
 name: PM_SEMANTIC_VIEW
 description: >

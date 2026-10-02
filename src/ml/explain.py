@@ -1,9 +1,4 @@
-"""Why the model predicts what it does, per engine: exact SHAP values (TreeExplainer)
-of the point-RUL model, summed per sensor over its four features (mean, std, slope,
-latest), in cycles of RUL. Negative = this sensor is pulling the prediction down.
-
-Contributions plus BASE_RUL add up exactly to the point prediction (before capping).
-"""
+"""Per-sensor SHAP contributions to predicted RUL, in cycles."""
 
 import numpy as np
 import pandas as pd

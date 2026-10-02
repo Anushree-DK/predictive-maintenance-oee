@@ -1,15 +1,6 @@
-"""Turns the raw NASA C-MAPSS files into the project's tables.
+"""Builds the project tables from the raw C-MAPSS files.
 
-Nothing here is randomly generated. Every row is either a C-MAPSS reading or a
-deterministic derivation of one; DATA_SOURCES.md lists which is which.
-
-The four subsets (FD001-FD004) are four fleets. In each one:
-- the *train* trajectories are engines that ran until they failed, which become
-  STATUS = FAILED machines with a real failure event in MAINTENANCE_HISTORY;
-- the *test* trajectories stop before failure, which become the IN_SERVICE fleet
-  the dashboard monitors. NASA's RUL_FD00X.txt holds their true remaining life,
-  kept apart in FLEET_GROUND_TRUTH and used only to evaluate the model.
-"""
+Train trajectories become FAILED engines; test trajectories are the IN_SERVICE fleet."""
 
 from __future__ import annotations
 
@@ -100,8 +91,7 @@ def regime_sensor_stats(sensors: pd.DataFrame, rows: pd.Series | None = None) ->
     df = add_regime(sensors if rows is None else sensors[rows])
     grouped = df.groupby("REGIME")[config.SENSOR_COLUMNS]
     means = grouped.mean().add_suffix("_MEAN")
-    # A sensor that is constant within a regime gets std 1, so its z-score is just
-    # its (zero) deviation rather than a division by zero.
+    # constant sensors get std 1 to avoid dividing by zero
     stds = grouped.std(ddof=0).where(lambda s: s > 1e-8, 1.0).add_suffix("_STD")
     return pd.concat([means, stds], axis=1).reset_index()
 
@@ -120,10 +110,7 @@ def failure_cycles(failures: pd.DataFrame) -> pd.Series:
 
 
 def fit_health_index(z_sensors: pd.DataFrame, failures: pd.DataFrame) -> LinearRegression:
-    """Linear health index over the informative sensors, fitted on failed engines to
-    the same piecewise-linear shape as the RUL label: 1 while healthy, falling to 0
-    over the last RUL_CAP cycles before failure — the standard data-driven health
-    indicator from the PHM literature. Learned from the real trajectories, not tuned."""
+    """Linear health index fitted on failed engines: 1 while healthy, 0 at failure."""
     life = failure_cycles(failures)
     hist = z_sensors[z_sensors["MACHINE_ID"].isin(life.index)]
     rul = hist["MACHINE_ID"].map(life) - hist["TIME_CYCLE"]
@@ -134,15 +121,7 @@ def fit_health_index(z_sensors: pd.DataFrame, failures: pd.DataFrame) -> LinearR
 def operating_periods(
     sensors: pd.DataFrame, machines: pd.DataFrame, failures: pd.DataFrame
 ) -> pd.DataFrame:
-    """Per machine, per PERIOD_CYCLES-cycle period: the inputs src/oee.py needs.
-
-    - CYCLES_FLOWN: cycles actually recorded in the period.
-    - IN_SPEC_CYCLES: cycles where every informative sensor is within IN_SPEC_Z
-      standard deviations of the healthy baseline (failed engines' first
-      HEALTHY_BASELINE_CYCLES cycles, per operating regime).
-    - AVG_HEALTH_INDEX: mean of the fitted health index, clipped to [0, 1].
-    - FAILURE_FLAG: the engine failed during this period.
-    """
+    """OEE inputs per engine and period: cycles flown, in-spec cycles, health index, failure flag."""
     failed_ids = machines.loc[machines["STATUS"] == "FAILED", "MACHINE_ID"]
     healthy_rows = sensors["MACHINE_ID"].isin(failed_ids) & (sensors["TIME_CYCLE"] <= config.HEALTHY_BASELINE_CYCLES)
     healthy_z = zscore_by_regime(sensors, regime_sensor_stats(sensors, rows=healthy_rows))
@@ -175,8 +154,7 @@ def build_all_tables(raw_dir: Path, fleets=tuple(config.CMAPSS_FLEETS)) -> dict[
     failures = pd.concat([p["failures"] for p in parts], ignore_index=True)
     ground_truth = pd.concat([p["ground_truth"] for p in parts], ignore_index=True)
 
-    # Feature normalization uses only failed (historical) engines' readings, so
-    # nothing about the in-service fleet leaks into what the model is trained on.
+    # stats from failed engines only
     failed_ids = machines.loc[machines["STATUS"] == "FAILED", "MACHINE_ID"]
     stats = regime_sensor_stats(sensors, rows=sensors["MACHINE_ID"].isin(failed_ids))
 

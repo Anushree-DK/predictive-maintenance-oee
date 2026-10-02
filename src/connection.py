@@ -8,16 +8,7 @@ _session = None
 
 
 def _ensure_local_network_ca_trusted() -> None:
-    """The Snowflake connector uses its own bundled OpenSSL (via pyOpenSSL) for
-    certificate verification, which only trusts the public certifi bundle — it
-    never consults the OS trust store. If this machine's network sits behind a
-    TLS-inspecting proxy/firewall whose root CA is already trusted by macOS (via
-    Keychain), the connector would otherwise reject every connection as an
-    untrusted chain. This pulls any such already-OS-trusted CA(s) out of the
-    macOS Keychain and adds them to a combined bundle so verification stays
-    real (it still rejects anything neither certifi nor the OS trusts) instead
-    of disabling certificate checks. No-op, safely, on any other setup.
-    """
+    """Adds CAs trusted by the macOS keychain to the connector's CA bundle (for TLS-inspecting proxies)."""
     import os
     import certifi
 

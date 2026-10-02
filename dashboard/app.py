@@ -1,8 +1,4 @@
-"""Unified Command Center: engine health / RUL / risk / OEE in one view, with
-agentic actions that fire and visibly update the dashboard + outcome log.
-
-Run with: streamlit run dashboard/app.py
-"""
+"""Fleet command center. Run with: streamlit run dashboard/app.py"""
 
 import sys
 from pathlib import Path
@@ -69,7 +65,7 @@ def load_backtest():
     return json.loads((config.REPORTS_DIR / "backtest.json").read_text()), pd.read_csv(config.REPORTS_DIR / "backtest_curve.csv")
 
 
-# Reference palette (dataviz skill): categorical slots 1-2, diverging blue <-> red.
+# chart colors: blue/orange for series, blue/red for SHAP direction
 SERIES_1, SERIES_2 = "#2a78d6", "#eb6834"
 RAISES_RUL, LOWERS_RUL = "#2a78d6", "#e34948"
 

@@ -1,9 +1,4 @@
--- Creates the Cortex Analyst Semantic View PDM.PUBLIC.PM_SEMANTIC_VIEW from
--- sql/003_semantic_model.yaml. `python scripts/deploy_snowflake.py agent` does this
--- (and creates the maintenance agent); the SQL below is the manual equivalent.
--- Needs SNOWFLAKE.CORTEX_USER (or CORTEX_ANALYST_USER) on the role, and Cortex
--- Analyst in-region or cross-region inference enabled
--- (ALTER ACCOUNT SET CORTEX_ENABLED_CROSS_REGION = 'ANY_REGION'; ACCOUNTADMIN only).
+-- Manual creation of PM_SEMANTIC_VIEW (deploy_snowflake.py agent does the same)
 
 USE SCHEMA PDM.PUBLIC;
 

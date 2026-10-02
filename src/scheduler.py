@@ -1,22 +1,4 @@
-"""Maintenance scheduling under shop capacity: which engines to pull, and when, to
-minimize expected downtime cost.
-
-The planning horizon is split into shop slots of SHOP_SLOT_CYCLES cycles; each
-slot can take `capacity` engines. An engine serviced in slot s (at the end of the
-slot, cycle s * SHOP_SLOT_CYCLES) costs a planned repair — unless it fails first,
-in which case it costs an unplanned repair. An engine left unscheduled costs an
-unplanned repair if it fails within the horizon. Expected costs come from each
-engine's RUL distribution; the assignment is solved exactly as a MILP.
-
-Engines more likely than not to fail before the first slot are not scheduled: no
-shop slot can save them, so they are returned as GROUND_NOW — stop flying them
-until they can be repaired.
-
-RUL distribution: Normal(point prediction, sigma), with sigma from the width of
-the conformal 90% interval. That is an approximation; `python -m src.scheduler`
-checks it against the true RUL of NASA's test engines (calibration of the implied
-P(failure within 30 cycles)).
-"""
+"""Assigns engines to limited shop slots to minimize expected downtime cost (MILP)."""
 
 import numpy as np
 import pandas as pd
@@ -69,8 +51,7 @@ def optimize_schedule(
     schedule = pd.DataFrame(columns=["SLOT", "SERVICE_BY_CYCLE", "MACHINE_ID", "P_FAIL_BEFORE_SERVICE", "EXPECTED_SAVING_USD"])
     chosen_cost = 0.0
     if n:
-        # Minimize sum over scheduled (cost_if_scheduled - cost_if_not); the constant
-        # sum(cost_if_not) is added back below.
+        # objective relative to scheduling nothing
         c = (cost_if_scheduled[candidates] - cost_if_not[candidates, None]).ravel()
         one_slot_per_engine = np.kron(np.eye(n), np.ones(s))
         slot_capacity = np.kron(np.ones(n), np.eye(s))

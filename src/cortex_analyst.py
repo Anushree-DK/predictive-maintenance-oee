@@ -1,8 +1,4 @@
-"""Natural-language Q&A over the fleet (engines, predictions, degradation signals,
-OEE, failure history, work orders, action outcomes) via Cortex Analyst's REST API,
-using the Semantic View defined in sql/003_semantic_model.yaml. Verified live; the
-dashboard catches and shows failures rather than crashing.
-"""
+"""Natural-language questions over the fleet via the Cortex Analyst REST API."""
 
 import requests
 
@@ -22,8 +18,7 @@ def ask(question: str) -> dict:
     response = requests.post(
         f"https://{conn.host}/api/v2/cortex/analyst/message",
         headers={
-            # A Snowpark session token goes in the legacy "Snowflake Token" scheme;
-            # Bearer is for OAuth / key-pair JWT / programmatic access tokens.
+            # session tokens use the Snowflake Token scheme
             "Authorization": f'Snowflake Token="{conn.rest.token}"',
             "Content-Type": "application/json",
         },

@@ -1,12 +1,4 @@
-"""Builds every project table from the real NASA C-MAPSS dataset and writes them to
-data/processed/*.csv (the "local" backend; the same files are what gets loaded
-into Snowflake). See src/cmapss.py for how each table is derived.
-
-Download NASA's "Turbofan Engine Degradation Simulation Data Set" and unzip it so
-data/raw/CMAPSS/ holds train_FD00X.txt / test_FD00X.txt / RUL_FD00X.txt, then:
-
-    python scripts/load_cmapss.py
-"""
+"""Builds the project tables from the NASA C-MAPSS files (data/raw/CMAPSS) into data/processed/."""
 
 from __future__ import annotations
 

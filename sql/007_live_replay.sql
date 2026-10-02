@@ -1,12 +1,4 @@
--- Live replay for demos: real NASA readings streamed into RAW_SENSOR_DATA so the
--- event-driven pipeline (RAW_SENSOR_STREAM -> SCORE_FLEET_TASK -> SCORE_FLEET())
--- runs on its own. C-MAPSS has no future readings for the in-service engines, so
--- REPLAY_PREPARE rewinds the fleet instead: it moves each in-service engine's last
--- N real cycles into REPLAY_QUEUE (keeping at least 15). REPLAY_STEP streams them
--- back one cycle at a time; when the queue is empty the fleet is exactly back at
--- NASA's latest readings. TRAIN_RUL_MODEL refuses to run while the queue holds
--- rows, since its evaluation needs the full test trajectories.
--- Deployed by `python scripts/deploy_snowflake.py replay`.
+-- Live replay: hold back each in-service engine's last real cycles, then stream them back
 
 USE SCHEMA PDM.PUBLIC;
 

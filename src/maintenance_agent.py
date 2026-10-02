@@ -1,11 +1,4 @@
-"""Client for MAINTENANCE_AGENT, the Cortex Agent defined in
-sql/006_maintenance_agent.sql, through the Cortex Agents Run API.
-
-The agent plans its own tool calls — Cortex Analyst over the fleet's semantic view,
-Cortex Search over the NASA documentation, and DRAFT_WORK_ORDER — and answers with
-citations. ask() returns the answer plus a trace of what the agent did, so the
-dashboard can show its work.
-"""
+"""Client for the MAINTENANCE_AGENT Cortex Agent (Run API)."""
 
 import json
 import re

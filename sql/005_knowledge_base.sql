@@ -1,9 +1,4 @@
--- Knowledge base for the maintenance agent: the NASA documents that ship with the
--- C-MAPSS dataset (Saxena et al. 2008, "Damage Propagation Modeling for Aircraft
--- Engine Run-to-Failure Simulation", and the dataset readme) — real source material,
--- no invented manuals. Parsed and chunked inside Snowflake, then indexed by Cortex
--- Search. scripts/deploy_snowflake.py `knowledge` uploads the files to DOCS_STAGE
--- and runs this file.
+-- Agent knowledge base: the NASA C-MAPSS paper and readme, indexed by Cortex Search
 
 USE SCHEMA PDM.PUBLIC;
 
@@ -14,8 +9,7 @@ CREATE OR REPLACE TABLE DOC_CHUNKS (
     CHUNK      STRING
 );
 
--- The paper: AI_PARSE_DOCUMENT (layout mode keeps its tables), one row per page,
--- then split into overlapping chunks.
+-- Parse the paper page by page and split it into chunks
 INSERT INTO DOC_CHUNKS
 WITH parsed AS (
     SELECT AI_PARSE_DOCUMENT(
@@ -35,8 +29,7 @@ SELECT
 FROM pages,
      LATERAL FLATTEN(INPUT => SNOWFLAKE.CORTEX.SPLIT_TEXT_RECURSIVE_CHARACTER(CONTENT, 'markdown', 1500, 200)) c;
 
--- The readme: plain text (Windows-1252), read line by line from the stage and kept
--- as a single chunk — it is short.
+-- The readme as a single chunk
 CREATE OR REPLACE FILE FORMAT TEXT_LINES
     TYPE = CSV FIELD_DELIMITER = NONE RECORD_DELIMITER = '\n'
     ESCAPE_UNENCLOSED_FIELD = NONE ENCODING = 'WINDOWS1252';

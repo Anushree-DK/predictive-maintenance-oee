@@ -33,9 +33,7 @@ def test_engines_beyond_saving_are_grounded_not_scheduled():
 
 
 def test_capacity_is_respected_and_most_valuable_engines_win():
-    # Slots at cycles 15 and 30. Engines failing around cycles 20-26 are near-certain
-    # failures that only the first slot can save; slot 2 comes too late for them, and
-    # the engine at 40 is safe. So: two engines from E0-E3 in slot 1, nothing in slot 2.
+    # slot 2 comes too late for these engines, so only slot 1 is used
     fleet = _fleet([(f"E{i}", rul, 3) for i, rul in enumerate([20, 22, 24, 26, 28, 40])])
     result = optimize_schedule(fleet, capacity=2, n_slots=2, slot_cycles=15)
     schedule = result["schedule"]
@@ -45,8 +43,7 @@ def test_capacity_is_respected_and_most_valuable_engines_win():
 
 
 def test_servicing_only_pays_when_failure_risk_exceeds_the_cost_ratio():
-    # Over a 5-cycle horizon an engine with RUL ~8 rarely fails: a $100k planned repair
-    # isn't worth it against a 5% chance of a $450k unplanned one.
+    # a 5% failure risk doesn't justify a planned repair
     result = optimize_schedule(_fleet([("A", 8, 3)]), capacity=1, n_slots=1, slot_cycles=5)
     assert result["schedule"].empty
 

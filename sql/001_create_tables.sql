@@ -1,13 +1,10 @@
--- Run this once against a Snowflake account (SNOWFLAKE_MODE=snowflake).
--- Table shapes mirror data/processed/*.csv, which scripts/load_cmapss.py builds
--- from the real NASA C-MAPSS dataset (see DATA_SOURCES.md).
+-- Project tables, loaded from data/processed/*.csv
 
 CREATE DATABASE IF NOT EXISTS PDM;
 CREATE SCHEMA IF NOT EXISTS PDM.PUBLIC;
 USE SCHEMA PDM.PUBLIC;
 
--- One row per engine. FLEET = C-MAPSS subset; FAILED engines are the run-to-failure
--- (train) trajectories, IN_SERVICE engines the not-yet-failed (test) trajectories.
+-- FAILED = run-to-failure engines, IN_SERVICE = current fleet
 CREATE OR REPLACE TABLE MACHINE_DATA (
     MACHINE_ID           STRING PRIMARY KEY,   -- e.g. FD002-ENG-017 / FD002-HIST-017
     FLEET                STRING,               -- FD001..FD004
@@ -43,8 +40,7 @@ CREATE OR REPLACE TABLE MAINTENANCE_HISTORY (
     DESCRIPTION      STRING
 );
 
--- OEE inputs per engine per 10-cycle period, derived from RAW_SENSOR_DATA
--- (src/cmapss.py::operating_periods; formula in src/oee.py).
+-- OEE inputs per engine per 10-cycle period
 CREATE OR REPLACE TABLE OPERATING_PERIODS (
     MACHINE_ID       STRING,
     PERIOD_INDEX     NUMBER,
@@ -56,8 +52,7 @@ CREATE OR REPLACE TABLE OPERATING_PERIODS (
     FAILURE_FLAG     BOOLEAN
 );
 
--- Per-operating-regime sensor mean/std (from FAILED engines only), used to z-score
--- sensors before feature engineering. REGIME = ROUND(OP_SETTING_1).
+-- Per-regime sensor mean/std, REGIME = ROUND(OP_SETTING_1)
 CREATE OR REPLACE TABLE REGIME_SENSOR_STATS (
     REGIME NUMBER,
     SENSOR_1_MEAN FLOAT, SENSOR_2_MEAN FLOAT, SENSOR_3_MEAN FLOAT, SENSOR_4_MEAN FLOAT,
@@ -74,16 +69,14 @@ CREATE OR REPLACE TABLE REGIME_SENSOR_STATS (
     SENSOR_21_STD FLOAT
 );
 
--- NASA's true RUL for each IN_SERVICE engine (RUL_FD00X.txt). Evaluation only —
--- the live pipeline never reads it.
+-- True RUL of in-service engines (evaluation only)
 CREATE OR REPLACE TABLE FLEET_GROUND_TRUTH (
     MACHINE_ID          STRING PRIMARY KEY,
     LAST_OBSERVED_CYCLE NUMBER,
     TRUE_RUL            NUMBER
 );
 
--- Logs what happened after each agentic action, closing the feedback loop.
--- IF NOT EXISTS: re-running this script must not wipe logged actions.
+-- Actions and outcomes, kept across re-runs
 CREATE TABLE IF NOT EXISTS ACTION_OUTCOMES (
     ACTION_ID                     STRING PRIMARY KEY,
     MACHINE_ID                    STRING,

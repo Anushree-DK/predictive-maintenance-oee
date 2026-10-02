@@ -1,7 +1,4 @@
-"""Agentic actions and the feedback loop: log what was recommended/taken, and later
-whether the predicted failure actually occurred. Kept deliberately simple — this is
-the foundation for continuous learning, not a retraining pipeline.
-"""
+"""Logs actions and their outcomes (the feedback loop)."""
 
 from __future__ import annotations
 

@@ -1,9 +1,4 @@
--- The maintenance agent: a Cortex Agent that answers fleet questions (Cortex Analyst
--- over PM_SEMANTIC_VIEW), explains engineering background with citations (Cortex
--- Search over the NASA documentation), and drafts work orders (DRAFT_WORK_ORDER).
--- It can only DRAFT: every work order waits for a human to approve or reject it in
--- the Command Center (src/work_orders.py). Deployed by
--- `python scripts/deploy_snowflake.py agent` after sql/005_knowledge_base.sql.
+-- Maintenance agent, its work-order tool and supporting views
 
 USE SCHEMA PDM.PUBLIC;
 
@@ -26,10 +21,7 @@ CREATE TABLE IF NOT EXISTS WORK_ORDERS (
     ACTION_ID                    STRING    -- ACTION_OUTCOMES row written on approval
 );
 
--- Each in-service engine's three fastest-drifting sensors, with what they measure
--- (SENSOR_REFERENCE, from Table 2 of the NASA paper; loaded by the deploy script from
--- config.SENSOR_DESCRIPTIONS). Gives the agent per-engine evidence without exposing
--- the 85-column feature table.
+-- Top 3 drifting sensors per in-service engine
 CREATE OR REPLACE VIEW ENGINE_DEGRADATION_SIGNALS AS
 WITH slopes AS (
     SELECT MACHINE_ID, SENSOR_COLUMN, SLOPE
@@ -69,8 +61,7 @@ FROM slopes s
 JOIN SENSOR_REFERENCE r ON r.SENSOR = REPLACE(s.SENSOR_COLUMN, '_SLOPE', '')
 QUALIFY DRIFT_RANK <= 3;
 
--- Agent tool. Validates its inputs and snapshots the engine's current prediction,
--- so the draft records exactly what the agent saw.
+-- Agent tool: drafts a work order with the engine's current prediction
 CREATE OR REPLACE PROCEDURE DRAFT_WORK_ORDER(
     P_MACHINE_ID STRING, P_WORK_TYPE STRING, P_PRIORITY STRING, P_JUSTIFICATION STRING
 )

@@ -1,13 +1,9 @@
--- Business-question analysis worksheet for the Predictive Maintenance & OEE
--- Command Center. Paste into a Snowsight Worksheet against the PDM database —
--- each query stands alone and answers one question a fleet or reliability
--- manager would actually ask. All data is real NASA C-MAPSS (see DATA_SOURCES.md).
+-- Analysis worksheet for Snowsight
 
 USE DATABASE PDM;
 USE SCHEMA PUBLIC;
 
--- 1. How long do engines in each fleet last before failing?
---    (real run-to-failure events: the reliability baseline the model improves on)
+-- 1. Engine life per fleet
 SELECT
     m.FLEET,
     m.FAULT_MODES,
@@ -21,8 +17,7 @@ GROUP BY m.FLEET, m.FAULT_MODES
 ORDER BY AVG_LIFE_CYCLES;
 
 
--- 2. Lifetime OEE by fleet (same formula as src/oee.py; 2.0 = HOURS_PER_CYCLE and
---    18 = AVG_UNPLANNED_REPAIR_HOURS from config.py).
+-- 2. Lifetime OEE by fleet (2.0 h per cycle, 18 h unplanned repair)
 WITH scored AS (
     SELECT
         m.FLEET,
@@ -44,9 +39,7 @@ GROUP BY FLEET
 ORDER BY AVG_OEE;
 
 
--- 3. Which in-service engines are drifting hardest right now on SENSOR_11
---    (HPC static pressure, Ps30 — the classic HPC-degradation signal)?
---    Same closed-form slope as src/feature_engineering.py, over the last 15 cycles.
+-- 3. In-service engines drifting fastest on SENSOR_11 (Ps30), last 15 cycles
 WITH recent AS (
     SELECT r.MACHINE_ID, r.TIME_CYCLE, r.SENSOR_11
     FROM RAW_SENSOR_DATA r
@@ -62,12 +55,10 @@ FROM recent
 GROUP BY MACHINE_ID
 ORDER BY ABS(SENSOR_11_SLOPE) DESC
 LIMIT 10;
--- Swap SENSOR_11 for any of SENSOR_1..SENSOR_21. Single-condition fleets (FD001/FD003)
--- compare directly; for FD002/FD004 compare within an operating regime.
+-- For FD002/FD004, compare within one operating regime
 
 
--- 4. In-service engines in the worst recent condition: lowest health index and
---    in-spec rate over their last 3 periods.
+-- 4. In-service engines in the worst recent condition
 WITH recent AS (
     SELECT p.*
     FROM OPERATING_PERIODS p
@@ -85,8 +76,7 @@ ORDER BY RECENT_HEALTH_INDEX, RECENT_IN_SPEC_RATE
 LIMIT 10;
 
 
--- 5. Agentic action effectiveness: of the actions the AI recommended and a
---    human took, how many prevented (vs. didn't prevent) a failure?
+-- 5. Action outcomes by action type
 SELECT
     ACTION_TYPE,
     COUNT(*) AS TOTAL_ACTIONS,

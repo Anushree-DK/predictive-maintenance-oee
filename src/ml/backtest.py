@@ -1,23 +1,6 @@
-"""Backtest: would acting on this model's predictions have beaten fixed-interval
-maintenance on the real C-MAPSS failures?
+"""Replays every failed engine with out-of-fold predictions and compares predictive vs fixed-interval maintenance.
 
-Every failed engine is replayed cycle by cycle with *out-of-fold* predictions: the
-709 failed engines are split into 5 folds by engine, and each fold is scored by
-models (src/ml/train.py::fit_models) trained only on the other four. So no engine
-is ever scored by a model that saw its own failure.
-
-Policies, each judged against the engine's real failure cycle:
-- predictive(L): send the engine to the shop at the first cycle where the lower
-  bound of its 90% RUL interval is <= L cycles (L = 15 is the CRITICAL risk class);
-- fixed-interval(T): overhaul every engine of a fleet at age T, with T set per fleet
-  from that fleet's own failure-age distribution — a strong, in-sample baseline.
-
-An intervention "catches" the failure if it happens at least LEAD_CYCLES before
-the engine would have failed (time to get the engine into the shop). Life left on
-the table by intervening early is the engine's true RUL at the intervention.
-
-    python -m src.ml.backtest      # ~10 min; writes reports/backtest.json + backtest_curve.csv
-"""
+Usage: python -m src.ml.backtest"""
 
 import json
 import sys
@@ -85,8 +68,7 @@ def summarize(outcomes: pd.DataFrame, lives: pd.Series) -> dict:
     caught = outcomes["CAUGHT"]
     life = lives.reindex(outcomes.index)
     life_used = 1 - outcomes["WASTED_CYCLES"] / life
-    # Every engine makes exactly one shop visit (planned if caught, unplanned if not),
-    # after flying its life minus whatever was left unused.
+    # one shop visit per engine
     cycles_flown = float((life - outcomes["WASTED_CYCLES"]).sum())
     return {
         "engines": int(len(outcomes)),
