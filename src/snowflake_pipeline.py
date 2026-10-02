@@ -73,6 +73,14 @@ def train_procedure(session: Session) -> str:
     from src.ml.train import build_evaluation_set, build_training_set, evaluate, fit_models
 
     _bind(session)
+    queued = session.sql(
+        "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'REPLAY_QUEUE'"
+    ).collect()[0][0] and session.table("REPLAY_QUEUE").count()
+    if queued:
+        raise RuntimeError(
+            f"{queued} readings are held back by a live replay; CALL REPLAY_RESTORE() first, since "
+            "evaluation needs the in-service engines' full trajectories."
+        )
     train, test = build_training_set(), build_evaluation_set()
     bundle = fit_models(train)
     metrics = evaluate(bundle, train, test)

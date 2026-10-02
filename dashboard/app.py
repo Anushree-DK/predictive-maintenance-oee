@@ -125,6 +125,49 @@ with st.expander("How accurate is the model? (evaluated on NASA's held-out test 
         f"the model already saw. Predicting the mean scores {metrics['baselines']['constant_mean_rul_rmse']:.1f}."
     )
 
+if config.SNOWFLAKE_MODE == "snowflake":
+    from src.connection import get_session
+
+    @st.fragment(run_every=15)
+    def live_replay_panel():
+        """Streams held-back real NASA cycles into RAW_SENSOR_DATA (sql/007_live_replay.sql);
+        SCORE_FLEET_TASK picks them up on its own. Polls for new scoring runs and refreshes."""
+        session = get_session()
+        queued = session.sql("SELECT COUNT(*) FROM REPLAY_QUEUE").collect()[0][0]
+        last_run = session.sql(
+            "SELECT RUN_AT, NEW_SENSOR_ROWS FROM SCORING_RUNS ORDER BY RUN_AT DESC LIMIT 1"
+        ).collect()[0]
+        if st.session_state.get("last_scoring_run") not in (None, last_run["RUN_AT"]):
+            st.session_state["last_scoring_run"] = last_run["RUN_AT"]
+            st.cache_data.clear()
+            st.rerun(scope="app")
+        st.session_state["last_scoring_run"] = last_run["RUN_AT"]
+
+        with st.expander("Live replay — stream real sensor readings through the pipeline", expanded=queued > 0):
+            st.caption(
+                "Rewind holds back each in-service engine's last 20 real NASA cycles; streaming inserts them into "
+                "RAW_SENSOR_DATA, where a Snowflake stream triggers SCORE_FLEET_TASK to rescore the fleet "
+                "(about a minute). This page refreshes itself when the task finishes."
+            )
+            r1, r2, r3, r4, r5 = st.columns([1, 1, 1, 1, 2])
+            if r1.button("Rewind 20 cycles", disabled=queued > 0):
+                with st.spinner("Rewinding and rescoring…"):
+                    st.toast(session.sql("CALL REPLAY_PREPARE(20)").collect()[0][0])
+                st.cache_data.clear()
+                st.rerun(scope="app")
+            if r2.button("Stream 1 cycle", disabled=queued == 0):
+                st.toast(session.sql("CALL REPLAY_STEP(1)").collect()[0][0])
+            if r3.button("Stream 5 cycles", disabled=queued == 0):
+                st.toast(session.sql("CALL REPLAY_STEP(5)").collect()[0][0])
+            if r4.button("Restore", disabled=queued == 0):
+                st.toast(session.sql("CALL REPLAY_RESTORE()").collect()[0][0])
+            r5.caption(
+                f"{queued:,} readings queued · last scoring run {last_run['RUN_AT']:%H:%M:%S} UTC "
+                f"({last_run['NEW_SENSOR_ROWS']:,} new readings)"
+            )
+
+    live_replay_panel()
+
 try:
     backtest, backtest_curve = load_backtest()
 except FileNotFoundError:
@@ -194,7 +237,7 @@ with right:
     st.subheader(f"{selected_machine} · fleet {machine_row['FLEET']}")
     st.caption(
         f"{machine_row['OPERATING_CONDITIONS']} operating condition(s) · fault modes: {machine_row['FAULT_MODES']} · "
-        f"{machine_row['CYCLES_OBSERVED']} cycles flown"
+        f"{int(feature_row['TIME_CYCLE'])} cycles flown"
     )
     m1, m2, m3, m4, m5 = st.columns(5)
     rul_label = f"{machine_row['RUL_PREDICTION']:.0f}" + ("+" if machine_row["RUL_PREDICTION"] >= config.RUL_CAP else "")

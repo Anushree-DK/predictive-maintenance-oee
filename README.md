@@ -153,6 +153,16 @@ versioning and scoring all run inside Snowflake:
 | `RAW_SENSOR_STREAM` + `SCORE_FLEET_TASK` | A stream on `RAW_SENSOR_DATA`. The task checks it every minute and calls `SCORE_FLEET()` only when new readings have arrived, so an idle fleet costs no warehouse time. Each run is logged in `SCORING_RUNS`. |
 | `RETRAIN_TASK` | A weekly `TRAIN_RUL_MODEL()` run. It is created suspended; enable it with `ALTER TASK RETRAIN_TASK RESUME`. |
 
+**Live replay** (`sql/007_live_replay.sql`, dashboard panel). C-MAPSS has no future
+readings for the in-service engines, so `REPLAY_PREPARE(20)` rewinds the fleet
+instead: it holds back each engine's last 20 real cycles. `REPLAY_STEP(n)` streams
+them back into `RAW_SENSOR_DATA`, the stream triggers `SCORE_FLEET_TASK`, and the
+fleet is rescored in about a minute with no manual call. Verified: after 5 cycles
+the task fired 61 s later on exactly the 3,533 new readings, CRITICAL engines rose
+from 12 to 28, and FD001-ENG-034 moved from HIGH (RUL 57) to CRITICAL (RUL 15).
+`REPLAY_RESTORE()` puts every reading back; the restored data was checked to be
+identical to the original load. `TRAIN_RUL_MODEL()` refuses to run mid-replay.
+
 In Snowflake mode the dashboard reads `FLEET_PREDICTIONS`, `ENGINE_FEATURES` and
 the matching `MODEL_METRICS` row, and shows which registry version made the
 predictions.
@@ -199,6 +209,7 @@ Deploy: `python scripts/deploy_snowflake.py knowledge` then `... agent`.
 | `src/oee.py` | OEE calculation |
 | `src/ml/train.py`, `src/ml/predict.py` | RUL, interval, failure probability, risk; evaluation |
 | `src/snowflake_pipeline.py`, `src/ml/registry_model.py`, `scripts/deploy_snowflake.py` | In-Snowflake training, Model Registry, scoring procedure + task |
+| `sql/007_live_replay.sql` | Live replay of held-back real readings through the stream + task |
 | `reports/model_metrics.json` | Latest evaluation on NASA's test set |
 | `src/ml/backtest.py`, `reports/backtest.json` | Out-of-fold replay of all real failures vs. fixed-interval maintenance |
 | `src/scheduler.py` | Capacity-constrained shop schedule (MILP) |

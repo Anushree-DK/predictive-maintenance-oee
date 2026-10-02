@@ -5,6 +5,7 @@
     python scripts/deploy_snowflake.py procedures # same, without retraining (code changes only)
     python scripts/deploy_snowflake.py knowledge  # NASA docs -> chunks -> Cortex Search service
     python scripts/deploy_snowflake.py agent      # semantic view, work orders, Cortex Agent
+    python scripts/deploy_snowflake.py replay     # live-replay procedures (demo)
     python scripts/deploy_snowflake.py all
 
 Run scripts/load_cmapss.py first so data/processed/ exists.
@@ -85,7 +86,7 @@ def deploy_pipeline(session, train: bool = True) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("step", choices=["tables", "pipeline", "procedures", "knowledge", "agent", "all"])
+    parser.add_argument("step", choices=["tables", "pipeline", "procedures", "knowledge", "agent", "replay", "all"])
     args = parser.parse_args()
 
     if config.SNOWFLAKE_MODE != "snowflake":
@@ -101,6 +102,9 @@ def main():
         deploy_knowledge(session)
     if args.step in ("agent", "all"):
         deploy_agent(session)
+    if args.step in ("replay", "all"):
+        run_sql_file(session, config.ROOT_DIR / "sql" / "007_live_replay.sql")
+        print("created REPLAY_QUEUE and procedures REPLAY_PREPARE / REPLAY_STEP / REPLAY_RESTORE")
 
 
 if __name__ == "__main__":
