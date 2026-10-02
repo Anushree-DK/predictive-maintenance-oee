@@ -55,6 +55,21 @@ engine fleet actually measures:
   performance retained).
 - **Quality** = the share of cycles flown with every informative sensor in spec.
 
+## Agent knowledge base (`sql/005_knowledge_base.sql`)
+
+The maintenance agent's reference material is the documentation NASA ships with
+C-MAPSS, and nothing else: the Saxena et al. 2008 paper (`Damage Propagation
+Modeling.pdf`) and the dataset `readme.txt`. Snowflake parses the PDF
+(`AI_PARSE_DOCUMENT`), splits it into chunks, and Cortex Search indexes them in
+`DOC_CHUNKS` / `PDM_DOCS_SEARCH`. No manuals or procedures were written for the project.
+
+`SENSOR_REFERENCE` (`config.SENSOR_DESCRIPTIONS`) names each sensor column after the
+participant parameters in the paper's Table 2 (T2, T24, T30, T50, …, W31, W32), in the
+order the dataset's columns follow.
+
+Rows in `WORK_ORDERS` are created only when the agent drafts them at a user's request,
+and they change only when a person approves or rejects them.
+
 ## Assumptions (the only non-measured numbers)
 
 All of these live in `config.py`.

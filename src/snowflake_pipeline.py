@@ -115,7 +115,7 @@ def score_procedure(session: Session) -> str:
     in_service = "r.MACHINE_ID IN (SELECT MACHINE_ID FROM MACHINE_DATA WHERE STATUS = 'IN_SERVICE')"
 
     features = session.sql(build_feature_sql(where=in_service))
-    features.write.save_as_table("ENGINE_FEATURES", mode="overwrite")
+    features.write.save_as_table("ENGINE_FEATURES", mode="truncate")
     features = session.table("ENGINE_FEATURES")
 
     scored = version.run(features, function_name="predict")
@@ -126,7 +126,8 @@ def score_procedure(session: Session) -> str:
         F.sysdate().alias("SCORED_AT"),  # UTC, unlike CURRENT_TIMESTAMP()
         F.lit(version.version_name).alias("MODEL_VERSION"),
     )
-    predictions.write.save_as_table("FLEET_PREDICTIONS", mode="overwrite")
+    # "truncate" keeps the table object, which the semantic view and agent reference.
+    predictions.write.save_as_table("FLEET_PREDICTIONS", mode="truncate")
     engines = session.table("FLEET_PREDICTIONS").count()
 
     # Reading the stream inside DML advances its offset, so the task goes idle again.

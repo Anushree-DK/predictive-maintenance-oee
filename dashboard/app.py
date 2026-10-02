@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from src import data_access, oee
 from src.business_impact import add_expected_cost_column, expected_cost_avoided, fleet_risk_exposure
-from src.decision_layer import explain
+from src.decision_layer import describe_sensor, explain, top_drifting_sensors
 from src.feature_engineering import get_feature_table
 from src.ml.predict import load_model, predict_with_bundle
 
@@ -137,20 +137,24 @@ with right:
     m5.metric("Value of acting now", f"${machine_row['EXPECTED_COST_AVOIDED_USD']:,.0f}")
 
     sensor_history = data_access.load_sensor_history(selected_machine)
-    top_sensor = feature_row.filter(like="_SLOPE").abs().idxmax().replace("_SLOPE", "")
+    top_sensor = top_drifting_sensors(feature_row, n=1)[0][0]
     fig = px.line(
         sensor_history, x="TIME_CYCLE", y=top_sensor,
-        title=f"Most-degrading sensor: {top_sensor} (raw reading)",
+        title=f"Fastest-drifting sensor: {describe_sensor(top_sensor)}",
     )
     st.plotly_chart(fig, width="stretch")
 
     st.markdown("**AI / Decision layer**")
     reasoning = explain(selected_machine, machine_row.to_dict(), feature_row)
     st.write(f"- **Why it will fail:** {reasoning['why']}")
-    if reasoning["root_cause"]:
-        st.write(f"- **Root cause:** {reasoning['root_cause']}")
-        st.write(f"- **Recommended action:** {reasoning['recommended_action']}")
-        st.write(f"- **Certainty:** {reasoning['confidence_note']}")
+    st.write(f"- **Root cause:** {reasoning['root_cause']}")
+    st.write(f"- **Recommended action:** {reasoning['recommended_action']}")
+    st.write(f"- **Certainty:** {reasoning['confidence_note']}")
+    if reasoning["citations"]:
+        with st.expander(f"Sources — NASA C-MAPSS documentation ({len(reasoning['citations'])})"):
+            for citation in reasoning["citations"]:
+                st.caption(citation)
+    st.caption(f"Reasoning: {reasoning['source']}")
 
     st.markdown("**Agentic actions**")
     a1, a2, a3 = st.columns(3)
@@ -181,23 +185,97 @@ st.caption(
 
 if config.SNOWFLAKE_MODE == "snowflake":
     st.divider()
-    st.subheader("Ask the fleet a question (Cortex Analyst)")
+    st.subheader("Maintenance agent")
     st.caption(
-        "Natural language over MACHINE_DATA / MAINTENANCE_HISTORY / OPERATING_PERIODS / "
-        "ACTION_OUTCOMES, via the Semantic View in sql/003_semantic_model.yaml."
+        "A Cortex Agent: it queries the fleet (Cortex Analyst), reads NASA's C-MAPSS documentation "
+        "(Cortex Search), and drafts work orders for a planner to approve below."
     )
-    question = st.text_input("Ask a question", placeholder="Which fleet has the worst OEE?")
-    if question:
-        from src.cortex_analyst import ask as ask_analyst
+    agent_tab, analyst_tab = st.tabs(["Ask the agent", "Cortex Analyst (SQL only)"])
 
-        try:
-            result = ask_analyst(question)
-            st.write(result["answer"])
-            if result["sql"]:
-                with st.expander("Generated SQL"):
-                    st.code(result["sql"], language="sql")
-        except Exception as e:
-            st.warning(f"Cortex Analyst unavailable: {e}")
+    with agent_tab:
+        from src.maintenance_agent import ask as ask_agent
+
+        history = st.session_state.setdefault("agent_history", [])
+        for turn in history:
+            with st.chat_message(turn["role"]):
+                st.markdown(turn["text"])
+        prompt = st.chat_input("e.g. Draft work orders for the critical engines in fleet FD003")
+        if prompt:
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            with st.chat_message("assistant"):
+                with st.spinner("Agent is working…"):
+                    try:
+                        result = ask_agent(prompt, history=history)
+                    except Exception as e:
+                        result = None
+                        st.warning(f"Agent unavailable: {e}")
+                if result:
+                    st.markdown(result["answer"])
+                    for table in result["tables"]:
+                        st.dataframe(pd.DataFrame(table["rows"], columns=table["columns"]), hide_index=True)
+                    with st.expander(f"How the agent got this ({len(result['steps'])} tool calls)"):
+                        for step in result["steps"]:
+                            st.markdown(f"**{step['tool']}**")
+                            if step["sql"]:
+                                st.code(step["sql"].strip(), language="sql")
+                            elif step["query"]:
+                                st.caption(f"search: {step['query']}")
+                            else:
+                                st.json(step["input"])
+                        if result["citations"]:
+                            st.caption("Sources: " + "; ".join(result["citations"]))
+                    history += [{"role": "user", "text": prompt}, {"role": "assistant", "text": result["answer"]}]
+                    if any(step["tool"] == "draft_work_order" for step in result["steps"]):
+                        st.cache_data.clear()
+
+    with analyst_tab:
+        question = st.text_input("Ask a question", placeholder="Which fleet has the worst OEE?")
+        if question:
+            from src.connection import get_session
+            from src.cortex_analyst import ask as ask_analyst
+
+            try:
+                result = ask_analyst(question)
+                st.write(result["answer"])
+                if result["sql"]:
+                    st.dataframe(get_session().sql(result["sql"]).to_pandas(), hide_index=True)
+                    with st.expander("Generated SQL"):
+                        st.code(result["sql"], language="sql")
+            except Exception as e:
+                st.warning(f"Cortex Analyst unavailable: {e}")
+
+    st.divider()
+    st.subheader("Work orders awaiting approval")
+    from src import work_orders
+
+    orders = work_orders.load_work_orders()
+    pending = orders[orders["STATUS"] == "PENDING_APPROVAL"]
+    if pending.empty:
+        st.caption("No drafts waiting. Ask the agent to draft work orders for at-risk engines.")
+    for _, order in pending.iterrows():
+        with st.container(border=True):
+            c1, c2, c3 = st.columns([5, 1, 1])
+            c1.markdown(
+                f"**{order['PRIORITY']} {order['WORK_TYPE']}** · {order['MACHINE_ID']} · "
+                f"{order['RISK_CLASS_AT_DRAFT']}, RUL {order['RUL_PREDICTION_AT_DRAFT']:.0f} cycles at draft"
+            )
+            c1.caption(order["JUSTIFICATION"]
+            )
+            if c2.button("Approve", key=f"approve-{order['WORK_ORDER_ID']}", type="primary"):
+                work_orders.approve(order["WORK_ORDER_ID"])
+                st.cache_data.clear()
+                st.rerun()
+            if c3.button("Reject", key=f"reject-{order['WORK_ORDER_ID']}"):
+                work_orders.reject(order["WORK_ORDER_ID"])
+                st.rerun()
+    reviewed = orders[orders["STATUS"] != "PENDING_APPROVAL"]
+    if not reviewed.empty:
+        with st.expander(f"Reviewed work orders ({len(reviewed)})"):
+            st.dataframe(
+                reviewed[["MACHINE_ID", "WORK_TYPE", "PRIORITY", "STATUS", "REVIEWED_BY", "REVIEWED_AT", "CREATED_BY"]],
+                hide_index=True,
+            )
 
 st.divider()
 st.subheader("Outcome log (feedback loop)")

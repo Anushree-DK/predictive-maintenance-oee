@@ -6,9 +6,9 @@
 #
 # Schema follows Snowflake's Semantic View YAML spec
 # (docs.snowflake.com/en/user-guide/views-semantic/semantic-view-yaml-spec).
-# NOT YET APPLIED to any Snowflake account — see sql/004_create_semantic_view.sql.
+# Applied by `python scripts/deploy_snowflake.py agent` (see sql/004_create_semantic_view.sql).
 
-name: PM_SEMANTIC_MODEL
+name: PM_SEMANTIC_VIEW
 description: >
   Turbofan engine fleets from NASA's C-MAPSS dataset: engines, their real
   run-to-failure events, per-period OEE inputs, and AI-recommended actions.
@@ -166,6 +166,134 @@ tables:
         expr: FAILURE_PROBABILITY_AT_ACTION
         data_type: FLOAT
 
+  - name: PREDICTION
+    description: >
+      Latest prediction for each in-service engine, scored inside Snowflake by the default
+      version of RUL_MODEL in the Model Registry.
+    base_table:
+      database: PDM
+      schema: PUBLIC
+      table: FLEET_PREDICTIONS
+    primary_key:
+      columns: [MACHINE_ID]
+    dimensions:
+      - name: machine_id
+        expr: MACHINE_ID
+        data_type: VARCHAR
+      - name: risk_class
+        expr: RISK_CLASS
+        data_type: VARCHAR
+        description: >
+          CRITICAL, HIGH, MEDIUM or LOW, from the lower bound of the RUL interval
+          (CRITICAL <= 15 cycles, HIGH <= 40, MEDIUM <= 90).
+        synonyms: ["risk", "risk level"]
+      - name: model_version
+        expr: MODEL_VERSION
+        data_type: VARCHAR
+    time_dimensions:
+      - name: scored_at
+        expr: SCORED_AT
+        data_type: TIMESTAMP_NTZ
+    facts:
+      - name: rul_prediction
+        expr: RUL_PREDICTION
+        data_type: FLOAT
+        description: Predicted remaining useful life in flight cycles; 125 means 125 or more.
+        synonyms: ["remaining useful life", "RUL", "cycles left"]
+      - name: rul_lower
+        expr: RUL_LOWER
+        data_type: FLOAT
+        description: Lower bound of the 90% prediction interval for RUL.
+      - name: rul_upper
+        expr: RUL_UPPER
+        data_type: FLOAT
+        description: Upper bound of the 90% prediction interval for RUL.
+      - name: failure_probability
+        expr: FAILURE_PROBABILITY
+        data_type: FLOAT
+        description: Calibrated probability that the engine fails within the next 30 cycles.
+        synonyms: ["chance of failure", "probability of failure"]
+      - name: last_cycle
+        expr: LAST_CYCLE
+        data_type: NUMBER
+        description: Most recent cycle the prediction is based on.
+
+  - name: WORK_ORDER
+    description: Work orders drafted by the maintenance agent and their approval status.
+    base_table:
+      database: PDM
+      schema: PUBLIC
+      table: WORK_ORDERS
+    primary_key:
+      columns: [WORK_ORDER_ID]
+    dimensions:
+      - name: work_order_id
+        expr: WORK_ORDER_ID
+        data_type: VARCHAR
+      - name: machine_id
+        expr: MACHINE_ID
+        data_type: VARCHAR
+      - name: work_type
+        expr: WORK_TYPE
+        data_type: VARCHAR
+        description: INSPECTION, REPAIR or PARTS_ORDER.
+      - name: priority
+        expr: PRIORITY
+        data_type: VARCHAR
+        description: P1 (within 24 hours), P2 (next maintenance window), P3 (routine).
+      - name: status
+        expr: STATUS
+        data_type: VARCHAR
+        description: PENDING_APPROVAL, APPROVED or REJECTED.
+      - name: justification
+        expr: JUSTIFICATION
+        data_type: VARCHAR
+    time_dimensions:
+      - name: created_at
+        expr: CREATED_AT
+        data_type: TIMESTAMP_NTZ
+    facts:
+      - name: rul_prediction_at_draft
+        expr: RUL_PREDICTION_AT_DRAFT
+        data_type: FLOAT
+
+  - name: DEGRADATION_SIGNAL
+    description: >
+      Each in-service engine's three fastest-drifting sensors over its last 15 cycles,
+      with what each sensor physically measures (NASA C-MAPSS, Saxena et al. 2008 Table 2).
+    base_table:
+      database: PDM
+      schema: PUBLIC
+      table: ENGINE_DEGRADATION_SIGNALS
+    dimensions:
+      - name: machine_id
+        expr: MACHINE_ID
+        data_type: VARCHAR
+      - name: sensor
+        expr: SENSOR
+        data_type: VARCHAR
+        description: Sensor column, e.g. SENSOR_11.
+      - name: symbol
+        expr: SYMBOL
+        data_type: VARCHAR
+        description: Engineering symbol, e.g. Ps30, T50, phi.
+      - name: sensor_description
+        expr: DESCRIPTION
+        data_type: VARCHAR
+        description: What the sensor measures, e.g. static pressure at HPC outlet.
+    facts:
+      - name: slope_sigma_per_cycle
+        expr: SLOPE_SIGMA_PER_CYCLE
+        data_type: FLOAT
+        description: >
+          Drift rate in standard deviations per cycle, relative to the engine's operating
+          regime; sign gives direction (rising or falling).
+        synonyms: ["drift", "trend", "degradation rate"]
+      - name: drift_rank
+        expr: DRIFT_RANK
+        data_type: NUMBER
+        description: 1 = fastest-drifting sensor for this engine.
+
 relationships:
   - name: maintenance_to_machine
     left_table: MAINTENANCE
@@ -181,6 +309,24 @@ relationships:
         right_column: MACHINE_ID
   - name: action_to_machine
     left_table: ACTION
+    right_table: MACHINE
+    relationship_columns:
+      - left_column: MACHINE_ID
+        right_column: MACHINE_ID
+  - name: prediction_to_machine
+    left_table: PREDICTION
+    right_table: MACHINE
+    relationship_columns:
+      - left_column: MACHINE_ID
+        right_column: MACHINE_ID
+  - name: work_order_to_machine
+    left_table: WORK_ORDER
+    right_table: MACHINE
+    relationship_columns:
+      - left_column: MACHINE_ID
+        right_column: MACHINE_ID
+  - name: degradation_signal_to_machine
+    left_table: DEGRADATION_SIGNAL
     right_table: MACHINE
     relationship_columns:
       - left_column: MACHINE_ID

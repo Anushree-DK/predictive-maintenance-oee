@@ -31,6 +31,33 @@ SNOWFLAKE_CONNECTION_PARAMS = {
 SENSOR_COLUMNS = [f"SENSOR_{i}" for i in range(1, 22)]
 OP_SETTING_COLUMNS = ["OP_SETTING_1", "OP_SETTING_2", "OP_SETTING_3"]
 
+# What each sensor column measures: the 21 sensor columns follow the order of the
+# participant parameters in Table 2 of Saxena et al. 2008 (the paper shipped with
+# C-MAPSS, indexed in the agent's knowledge base). Units: °R, psia, rpm.
+SENSOR_DESCRIPTIONS = {
+    "SENSOR_1": "T2 — total temperature at fan inlet",
+    "SENSOR_2": "T24 — total temperature at LPC outlet",
+    "SENSOR_3": "T30 — total temperature at HPC outlet",
+    "SENSOR_4": "T50 — total temperature at LPT outlet",
+    "SENSOR_5": "P2 — pressure at fan inlet",
+    "SENSOR_6": "P15 — total pressure in bypass duct",
+    "SENSOR_7": "P30 — total pressure at HPC outlet",
+    "SENSOR_8": "Nf — physical fan speed",
+    "SENSOR_9": "Nc — physical core speed",
+    "SENSOR_10": "epr — engine pressure ratio (P50/P2)",
+    "SENSOR_11": "Ps30 — static pressure at HPC outlet",
+    "SENSOR_12": "phi — ratio of fuel flow to Ps30",
+    "SENSOR_13": "NRf — corrected fan speed",
+    "SENSOR_14": "NRc — corrected core speed",
+    "SENSOR_15": "BPR — bypass ratio",
+    "SENSOR_16": "farB — burner fuel-air ratio",
+    "SENSOR_17": "htBleed — bleed enthalpy",
+    "SENSOR_18": "Nf_dmd — demanded fan speed",
+    "SENSOR_19": "PCNfR_dmd — demanded corrected fan speed",
+    "SENSOR_20": "W31 — HPT coolant bleed",
+    "SENSOR_21": "W32 — LPT coolant bleed",
+}
+
 # The 14 sensors that are not constant under a fixed operating condition — the set
 # used throughout the C-MAPSS literature for health assessment. Used for the
 # in-spec (quality) check and health index; the RUL model itself uses all 21,

@@ -57,11 +57,12 @@ feed back into Snowflake.
 | ML | scikit-learn HistGradientBoosting: point RUL, conformalized quantile interval, isotonic-calibrated failure classifier. Trained in a Snowflake stored procedure and versioned in the Snowflake Model Registry. |
 | Orchestration | Stream + Task: event-driven scoring inside Snowflake |
 | OEE | Availability × Performance × Quality, derived from sensor data (`src/oee.py`) |
-| AI reasoning | Snowflake Cortex `COMPLETE`, with a template fallback (local mode, or no Cortex access) |
-| NL analytics | Cortex Analyst over a Semantic View (`src/cortex_analyst.py`). Built, not yet live-tested. |
+| AI reasoning | Cortex `AI_COMPLETE` (claude-sonnet-4-5, structured JSON) grounded by Cortex Search over NASA's documentation, with a template fallback |
+| Agent | Cortex Agent with Cortex Analyst, Cortex Search and a work-order tool; human approval in the dashboard |
+| NL analytics | Cortex Analyst over a Semantic View (`src/cortex_analyst.py`) |
 | Business impact | Calibrated P(failure) → expected downtime cost avoided (`src/business_impact.py`) |
 | Frontend | Streamlit + Plotly |
-| Testing | pytest, 33 tests |
+| Testing | pytest, 37 tests |
 
 `SNOWFLAKE_MODE` in `.env` switches the backend without changing pipeline code (see
 `src/data_access.py`):
@@ -96,9 +97,9 @@ Parts) logs a row to `ACTION_OUTCOMES`, which appears in the dashboard's outcome
 python -m pytest tests/ -v
 ```
 
-The 33 tests cover the C-MAPSS → table derivation, the OEE formula, causal rolling
+The 37 tests cover the C-MAPSS → table derivation, the OEE formula, causal rolling
 features, pandas-vs-SQL feature parity (on DuckDB), conformal intervals, the risk
-classes, the NASA scoring function and business impact.
+classes, the NASA scoring function, agent-response parsing and business impact.
 
 ## Running on Snowflake
 
@@ -126,21 +127,26 @@ To deploy to a new account:
 4. Run `python scripts/deploy_snowflake.py pipeline`. This registers the
    procedures, trains in Snowflake (about 5 minutes), scores, and starts the task.
 
-`src/decision_layer.py` calls `SNOWFLAKE.CORTEX.COMPLETE`, with bound parameters.
-If Cortex is unavailable it falls back to the template and prefixes the result with
-`[Cortex unavailable: ...]`.
-
 **TLS behind SSL-inspecting proxies**: on macOS, `src/connection.py` builds a CA
 bundle from what the Keychain already trusts. It does not disable verification, and
 it does nothing on machines without such a proxy.
 
-### Cortex Analyst (natural-language Q&A): built, not yet verified live
+## AI layer (all live on Snowflake Cortex)
 
-`src/cortex_analyst.py` and `sql/003_semantic_model.yaml` add an "Ask the fleet a
-question" panel in Snowflake mode. Before it can work:
-1. Create the Semantic View (`sql/004_create_semantic_view.sql`).
-2. Grant `SNOWFLAKE.CORTEX_USER` or `SNOWFLAKE.CORTEX_ANALYST_USER` to the role.
-3. Use a region that supports Cortex Analyst, or enable cross-region inference.
+| Capability | How |
+|---|---|
+| **Per-engine diagnosis** (`src/decision_layer.py`) | Cortex Search pulls the most relevant passages of NASA's C-MAPSS paper. `AI_COMPLETE` (`claude-sonnet-4-5`) then returns schema-validated JSON (why, root cause, action, certainty, **page citations**), grounded in those passages and in the engine's prediction and drifting sensors, each named physically (e.g. Ps30, static pressure at the HPC outlet). |
+| **Cortex Search** `PDM_DOCS_SEARCH` | Indexes NASA's paper and readme, parsed in Snowflake with `AI_PARSE_DOCUMENT` (`sql/005_knowledge_base.sql`). |
+| **Cortex Analyst** `PM_SEMANTIC_VIEW` | Natural-language → SQL over engines, live predictions, degradation signals, OEE, failure history and work orders. Verified answers match the Python and SQL results. |
+| **Cortex Agent** `MAINTENANCE_AGENT` (`sql/006_maintenance_agent.sql`) | Plans its own tool calls across Analyst, Search and `DRAFT_WORK_ORDER`. It can look up at-risk engines, explain the physics with citations, and **draft** prioritised work orders with evidence. |
+| **Human in the loop** (`src/work_orders.py`) | The agent can only draft. A planner approves or rejects each work order in the Command Center; approval records who approved it and writes the prediction snapshot to `ACTION_OUTCOMES`. |
+
+Example: asked *"Draft work orders for the two FD001 engines with the lowest
+predicted RUL"*, the agent queried predictions, then each engine's degradation
+signals, and drafted P1 inspections for FD001-ENG-034 (RUL 4.1, bleed enthalpy
++0.108 σ/cycle) and FD001-ENG-076, both left pending approval.
+
+Deploy: `python scripts/deploy_snowflake.py knowledge` then `... agent`.
 
 ## Layout
 
@@ -155,8 +161,10 @@ question" panel in Snowflake mode. Before it can work:
 | `src/ml/train.py`, `src/ml/predict.py` | RUL, interval, failure probability, risk; evaluation |
 | `src/snowflake_pipeline.py`, `src/ml/registry_model.py`, `scripts/deploy_snowflake.py` | In-Snowflake training, Model Registry, scoring procedure + task |
 | `reports/model_metrics.json` | Latest evaluation on NASA's test set |
-| `src/decision_layer.py` | AI / decision layer (Cortex COMPLETE) |
+| `src/decision_layer.py` | Per-engine diagnosis (Cortex Search + AI_COMPLETE) |
 | `src/cortex_analyst.py` | Natural-language Q&A |
+| `sql/005_knowledge_base.sql` | NASA docs → chunks → Cortex Search |
+| `sql/006_maintenance_agent.sql`, `src/maintenance_agent.py`, `src/work_orders.py` | Cortex Agent, work-order tool, human approval |
 | `src/business_impact.py` | Predictions → $ downtime cost avoided |
 | `dashboard/app.py` | Unified Command Center + agentic actions |
 | `src/outcomes.py`, `src/data_access.py` | Outcome logging → `ACTION_OUTCOMES` feedback loop |
@@ -166,7 +174,7 @@ question" panel in Snowflake mode. Before it can work:
 
 - Near-failure interval coverage is 84%, against a 90% target (see Results).
 - The feedback loop logs outcomes but does not retrain yet.
-- Agentic actions log to `ACTION_OUTCOMES` only. They are not wired to a real CMMS.
+- Approved work orders log to `ACTION_OUTCOMES`. They are not wired to a real CMMS.
 - Cost rates are assumptions (see DATA_SOURCES.md).
 
 ## Hackathon submission checklist
@@ -180,10 +188,10 @@ Snowpark, Worksheets, Streamlit and Marketplace.
 - [x] 100% real data (NASA C-MAPSS), with derivations documented in [DATA_SOURCES.md](DATA_SOURCES.md)
 - [x] Model evaluated on NASA's official test set, with engine-level splits and calibrated uncertainty
 - [x] Snowflake Worksheet: [sql/002_analysis_worksheet.sql](sql/002_analysis_worksheet.sql)
-- [x] Unit tests (33, pytest)
+- [x] Unit tests (37, pytest)
 - [x] Business $-impact framing (`src/business_impact.py`)
 - [x] **Contest Snowflake account** live, Cortex verified
 - [x] Training, Model Registry and event-driven scoring inside Snowflake (stored procedures, Stream + Task)
-- [ ] Cortex Agent + Cortex Search; Cortex Analyst verified live
+- [x] Cortex Agent + Cortex Search + Cortex Analyst, all live, with human approval of agent actions
 - [ ] CoCo CLI used in the build
 - [ ] Presentation deck, demo video/GIF, Hack2Skill profile
