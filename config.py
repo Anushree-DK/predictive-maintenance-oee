@@ -1,9 +1,12 @@
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
 
-load_dotenv()
+    load_dotenv()
+except ImportError:  # inside Snowflake (stored procedures, registry models) there is no .env
+    pass
 
 ROOT_DIR = Path(__file__).parent
 RAW_CMAPSS_DIR = ROOT_DIR / "data" / "raw" / "CMAPSS"

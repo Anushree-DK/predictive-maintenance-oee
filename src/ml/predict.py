@@ -40,7 +40,9 @@ def load_model() -> dict:
     return joblib.load(path)
 
 
-def predict_with_bundle(bundle: dict, feature_table: pd.DataFrame, id_col: str = "MACHINE_ID") -> pd.DataFrame:
+def predict_with_bundle(bundle: dict, feature_table: pd.DataFrame, id_col: str | None = "MACHINE_ID") -> pd.DataFrame:
+    """One output row per feature row, in the same order. id_col=None omits the ID
+    column (the Model Registry joins outputs back to inputs itself)."""
     cols = bundle["feature_columns"]
     missing = [c for c in cols if c not in feature_table.columns]
     if missing:
@@ -54,14 +56,16 @@ def predict_with_bundle(bundle: dict, feature_table: pd.DataFrame, id_col: str =
     )
     prob = bundle["calibrator"].predict(bundle["classifier"].predict_proba(X)[:, 1])
 
-    return pd.DataFrame({
-        id_col: feature_table[id_col].values,
+    result = pd.DataFrame({
         "RUL_PREDICTION": np.round(point, 1),
         "RUL_LOWER": np.round(lower, 1),
         "RUL_UPPER": np.round(upper, 1),
         "FAILURE_PROBABILITY": np.round(prob, 3),
         "RISK_CLASS": [risk_class(lo) for lo in lower],
     })
+    if id_col is not None:
+        result.insert(0, id_col, feature_table[id_col].values)
+    return result
 
 
 def predict_for_features(feature_table: pd.DataFrame, id_col: str = "MACHINE_ID") -> pd.DataFrame:

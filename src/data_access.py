@@ -82,6 +82,25 @@ def load_fleet_ground_truth() -> pd.DataFrame:
     return _read("FLEET_GROUND_TRUTH")
 
 
+def load_snowflake_scoring() -> tuple[pd.DataFrame, pd.DataFrame, dict, str]:
+    """Snowflake mode: the outputs of the in-Snowflake pipeline (src/snowflake_pipeline.py)
+    — current features, predictions, and the metrics of the model version that made them."""
+    import json
+
+    predictions = _read_snowflake("FLEET_PREDICTIONS")
+    features = _read_snowflake("ENGINE_FEATURES")
+    version = predictions["MODEL_VERSION"].iloc[0]
+    from src.connection import get_session
+
+    row = get_session().sql(
+        "SELECT METRICS, SCORED_AT FROM MODEL_METRICS, (SELECT MAX(SCORED_AT) AS SCORED_AT FROM FLEET_PREDICTIONS) "
+        "WHERE MODEL_VERSION = ?",
+        params=[version],
+    ).collect()[0]
+    label = f"RUL_MODEL {version} (Snowflake Model Registry), scored in Snowflake at {row['SCORED_AT']:%Y-%m-%d %H:%M} UTC"
+    return features, predictions, json.loads(row["METRICS"]), label
+
+
 def load_action_outcomes() -> pd.DataFrame:
     return _read("ACTION_OUTCOMES")
 

@@ -49,6 +49,13 @@ def _ensure_local_network_ca_trusted() -> None:
     os.environ["SSL_CERT_FILE"] = combined_path
 
 
+def set_session(session) -> None:
+    """Use an existing session — inside a Snowflake stored procedure, the one
+    Snowflake passes in, rather than connecting again with .env credentials."""
+    global _session
+    _session = session
+
+
 def get_session():
     global _session
     if config.SNOWFLAKE_MODE != "snowflake":

@@ -54,7 +54,8 @@ feed back into Snowflake.
 | Data | NASA C-MAPSS FD001–FD004 (real) → `src/cmapss.py` |
 | Data platform | Snowflake |
 | Feature engineering | pandas locally; Snowflake SQL window functions in Snowflake mode. Parity is tested by running the SQL on DuckDB. |
-| ML | scikit-learn HistGradientBoosting: point RUL, conformalized quantile interval, isotonic-calibrated failure classifier |
+| ML | scikit-learn HistGradientBoosting: point RUL, conformalized quantile interval, isotonic-calibrated failure classifier. Trained in a Snowflake stored procedure and versioned in the Snowflake Model Registry. |
+| Orchestration | Stream + Task: event-driven scoring inside Snowflake |
 | OEE | Availability × Performance × Quality, derived from sensor data (`src/oee.py`) |
 | AI reasoning | Snowflake Cortex `COMPLETE`, with a template fallback (local mode, or no Cortex access) |
 | NL analytics | Cortex Analyst over a Semantic View (`src/cortex_analyst.py`). Built, not yet live-tested. |
@@ -99,23 +100,35 @@ The 33 tests cover the C-MAPSS → table derivation, the OEE formula, causal rol
 features, pandas-vs-SQL feature parity (on DuckDB), conformal intervals, the risk
 classes, the NASA scoring function and business impact.
 
-## Switching to Snowflake
+## Running on Snowflake
 
-**Status: not yet run against the new schema.** An earlier version was verified
-end-to-end on a self-made trial account, but Cortex and CoCo CLI need the account
-from the official Hack2Skill contest sign-up.
+**Status: live.** The project is deployed to the contest account (AWS
+ap-southeast-7, Cortex cross-region inference enabled). Training, model
+versioning and scoring all run inside Snowflake:
 
-1. Get the Snowflake sign-up link from the Hack2Skill Contest Site (not the generic
-   trial signup).
-2. Fill in `.env` (`SNOWFLAKE_ACCOUNT` as `<locator>.<region>.<cloud>`, user,
-   password, warehouse, role), then set `SNOWFLAKE_MODE=snowflake`.
-3. Run `sql/001_create_tables.sql`.
-4. Load `data/processed/*.csv` into the matching tables (Snowpark
-   `session.write_pandas(df, "MACHINE_DATA")`, etc.).
-5. Feature engineering, prediction and the dashboard run unchanged.
-   `src/decision_layer.py` calls `SNOWFLAKE.CORTEX.COMPLETE`, falling back to the
-   template if Cortex is unavailable on the account tier, and prefixes the fallback
-   with `[Cortex unavailable: ...]`.
+| Object | What it does |
+|---|---|
+| `TRAIN_RUL_MODEL()` | Python stored procedure. Trains on the failed engines, evaluates on NASA's test set, logs a new version of **`RUL_MODEL` to the Snowflake Model Registry** with its metrics, makes it the default, and appends to `MODEL_METRICS`. |
+| `SCORE_FLEET()` | Python stored procedure. Computes current features for the in-service fleet in SQL (`ENGINE_FEATURES`), scores them with the registry's default version, and writes `FLEET_PREDICTIONS`. |
+| `RAW_SENSOR_STREAM` + `SCORE_FLEET_TASK` | A stream on `RAW_SENSOR_DATA`. The task checks it every minute and calls `SCORE_FLEET()` only when new readings have arrived, so an idle fleet costs no warehouse time. Each run is logged in `SCORING_RUNS`. |
+| `RETRAIN_TASK` | A weekly `TRAIN_RUL_MODEL()` run. It is created suspended; enable it with `ALTER TASK RETRAIN_TASK RESUME`. |
+
+In Snowflake mode the dashboard reads `FLEET_PREDICTIONS`, `ENGINE_FEATURES` and
+the matching `MODEL_METRICS` row, and shows which registry version made the
+predictions.
+
+To deploy to a new account:
+1. Fill in `.env`: `SNOWFLAKE_ACCOUNT` (the account identifier, e.g. `ORG-ACCOUNT`),
+   user, password, `ACCOUNTADMIN`, warehouse, and `SNOWFLAKE_MODE=snowflake`.
+2. Run `python scripts/load_cmapss.py`.
+3. Run `python scripts/deploy_snowflake.py tables`. This creates the tables and
+   loads the real data, checking every row count.
+4. Run `python scripts/deploy_snowflake.py pipeline`. This registers the
+   procedures, trains in Snowflake (about 5 minutes), scores, and starts the task.
+
+`src/decision_layer.py` calls `SNOWFLAKE.CORTEX.COMPLETE`, with bound parameters.
+If Cortex is unavailable it falls back to the template and prefixes the result with
+`[Cortex unavailable: ...]`.
 
 **TLS behind SSL-inspecting proxies**: on macOS, `src/connection.py` builds a CA
 bundle from what the Keychain already trusts. It does not disable verification, and
@@ -140,6 +153,7 @@ question" panel in Snowflake mode. Before it can work:
 | `src/feature_engineering.py` | Regime normalisation + rolling features (pandas and SQL) |
 | `src/oee.py` | OEE calculation |
 | `src/ml/train.py`, `src/ml/predict.py` | RUL, interval, failure probability, risk; evaluation |
+| `src/snowflake_pipeline.py`, `src/ml/registry_model.py`, `scripts/deploy_snowflake.py` | In-Snowflake training, Model Registry, scoring procedure + task |
 | `reports/model_metrics.json` | Latest evaluation on NASA's test set |
 | `src/decision_layer.py` | AI / decision layer (Cortex COMPLETE) |
 | `src/cortex_analyst.py` | Natural-language Q&A |
@@ -168,8 +182,8 @@ Snowpark, Worksheets, Streamlit and Marketplace.
 - [x] Snowflake Worksheet: [sql/002_analysis_worksheet.sql](sql/002_analysis_worksheet.sql)
 - [x] Unit tests (33, pytest)
 - [x] Business $-impact framing (`src/business_impact.py`)
-- [ ] **Correct Snowflake account** (official contest sign-up), with Cortex enabled
-- [ ] Training, registry and scoring inside Snowflake (Snowpark ML, Model Registry, Tasks)
+- [x] **Contest Snowflake account** live, Cortex verified
+- [x] Training, Model Registry and event-driven scoring inside Snowflake (stored procedures, Stream + Task)
 - [ ] Cortex Agent + Cortex Search; Cortex Analyst verified live
 - [ ] CoCo CLI used in the build
 - [ ] Presentation deck, demo video/GIF, Hack2Skill profile

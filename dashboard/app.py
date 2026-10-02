@@ -18,6 +18,8 @@ from src.business_impact import add_expected_cost_column, expected_cost_avoided,
 from src.decision_layer import explain
 from src.feature_engineering import get_feature_table
 from src.ml.predict import load_model, predict_with_bundle
+
+PREDICTION_COLUMNS = ["MACHINE_ID", "RUL_PREDICTION", "RUL_LOWER", "RUL_UPPER", "FAILURE_PROBABILITY", "RISK_CLASS"]
 from src.outcomes import log_action, record_failure_result
 
 st.set_page_config(page_title="Unified Command Center", layout="wide")
@@ -28,16 +30,21 @@ def load_dashboard_data():
     machines = data_access.load_machine_data()
     periods = data_access.load_operating_periods()
 
-    bundle = load_model()
-    features = get_feature_table(group_col="MACHINE_ID")
-    predictions = add_expected_cost_column(predict_with_bundle(bundle, features, id_col="MACHINE_ID"))
+    if config.SNOWFLAKE_MODE == "snowflake":
+        features, predictions, metrics, model_label = data_access.load_snowflake_scoring()
+    else:
+        bundle = load_model()
+        features = get_feature_table(group_col="MACHINE_ID")
+        predictions = predict_with_bundle(bundle, features, id_col="MACHINE_ID")
+        metrics, model_label = bundle["metrics"], f"local model trained {bundle['trained_at']}"
+    predictions = add_expected_cost_column(predictions[PREDICTION_COLUMNS])
 
     summary = (
         machines[machines["STATUS"] == "IN_SERVICE"]
         .merge(predictions, on="MACHINE_ID", how="inner")
         .merge(oee.latest_oee_by_machine(periods), on="MACHINE_ID", how="left")
     )
-    return summary, features, oee.oee_by_fleet(periods, machines), bundle["metrics"]
+    return summary, features, oee.oee_by_fleet(periods, machines), metrics, model_label
 
 
 RISK_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
@@ -50,7 +57,7 @@ st.caption(
 )
 
 try:
-    summary, features, fleet_oee, metrics = load_dashboard_data()
+    summary, features, fleet_oee, metrics, model_label = load_dashboard_data()
 except FileNotFoundError as e:
     st.error(str(e))
     st.stop()
@@ -60,6 +67,7 @@ summary = summary[summary["FLEET"].isin(fleets)]
 if summary.empty:
     st.info("Select at least one fleet.")
     st.stop()
+st.caption(f"Predictions: {model_label}")
 summary = summary.sort_values(
     by=["RISK_CLASS", "RUL_LOWER"], key=lambda s: s.map(RISK_ORDER) if s.name == "RISK_CLASS" else s
 )
