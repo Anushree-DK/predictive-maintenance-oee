@@ -1,6 +1,6 @@
 """Deploy to Snowflake.
 
-Usage: python scripts/deploy_snowflake.py {tables|pipeline|procedures|knowledge|agent|replay|all}"""
+Usage: python scripts/deploy_snowflake.py {tables|pipeline|procedures|knowledge|agent|replay|streamlit|all}"""
 
 from __future__ import annotations
 
@@ -68,6 +68,27 @@ def deploy_agent(session) -> None:
     print(session.sql("CALL SYSTEM$CREATE_SEMANTIC_VIEW_FROM_YAML(?, ?)", params=[db_schema, semantic_yaml]).collect()[0][0])
 
 
+STREAMLIT_DIR = config.ROOT_DIR / "streamlit_app"
+STREAMLIT_FILES = ["streamlit_app.py", "environment.yml"]
+
+
+def deploy_streamlit(session) -> None:
+    session.sql(
+        "CREATE STAGE IF NOT EXISTS STREAMLIT_STAGE ENCRYPTION = (TYPE = 'SNOWFLAKE_SSE')"
+    ).collect()
+    for name in STREAMLIT_FILES:
+        local = str(STREAMLIT_DIR / name)
+        session.file.put(local, "@STREAMLIT_STAGE", auto_compress=False, overwrite=True)
+        print(f"  uploaded {name}")
+    session.sql("""
+        CREATE OR REPLACE STREAMLIT PDM.PUBLIC.FLEET_COMMAND_CENTER
+            ROOT_LOCATION  = '@PDM.PUBLIC.STREAMLIT_STAGE'
+            MAIN_FILE      = 'streamlit_app.py'
+            QUERY_WAREHOUSE = COMPUTE_WH
+    """).collect()
+    print("created STREAMLIT PDM.PUBLIC.FLEET_COMMAND_CENTER")
+
+
 def deploy_pipeline(session, train: bool = True) -> None:
     from src.snowflake_pipeline import deploy
 
@@ -76,7 +97,7 @@ def deploy_pipeline(session, train: bool = True) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("step", choices=["tables", "pipeline", "procedures", "knowledge", "agent", "replay", "all"])
+    parser.add_argument("step", choices=["tables", "pipeline", "procedures", "knowledge", "agent", "replay", "streamlit", "all"])
     args = parser.parse_args()
 
     if config.SNOWFLAKE_MODE != "snowflake":
@@ -95,6 +116,8 @@ def main():
     if args.step in ("replay", "all"):
         run_sql_file(session, config.ROOT_DIR / "sql" / "007_live_replay.sql")
         print("created REPLAY_QUEUE and procedures REPLAY_PREPARE / REPLAY_STEP / REPLAY_RESTORE")
+    if args.step in ("streamlit", "all"):
+        deploy_streamlit(session)
 
 
 if __name__ == "__main__":

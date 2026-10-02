@@ -193,6 +193,24 @@ signals, and drafted P1 inspections for FD001-ENG-034 (RUL 4.1, bleed enthalpy
 
 Deploy: `python scripts/deploy_snowflake.py knowledge` then `... agent`.
 
+## Built with Cortex Code CLI
+
+Cortex Code CLI (`cortex`, v1.1.87) was run headless against the project's Snowflake
+connection (`~/.snowflake/connections.toml`, connection `pdm`) for these parts of the
+build. Every prompt is in `coco/prompts/` and its output in `coco/logs/`.
+
+| Prompt | What Cortex Code did |
+|---|---|
+| `01_risk_class_check` / `01b_…` | Wrote query 6 in `sql/002_analysis_worksheet.sql` (does each risk class's window match what really happened?), ran it, found two wrong column names in its own draft, fixed them and re-ran. Result: 79.5% of CRITICAL engines really fail within 15 cycles; predicted and true average RUL agree in every class. |
+| `02_streamlit_in_snowflake` | Built `streamlit_app/`, a Streamlit in Snowflake version of the command center (KPIs, fleet table, SHAP drivers, work-order approvals, live replay), added the `streamlit` step to `scripts/deploy_snowflake.py`, and deployed `PDM.PUBLIC.FLEET_COMMAND_CENTER`. |
+| `03_fix_streamlit_app` | Fixed a wrong column found when the app was run against live data, and replaced string-built SQL with bound parameters plus a sensor-name allow-list. |
+
+Run one the same way:
+
+```powershell
+cortex -c pdm --allowed-tools "Read" "Edit" "Grep" "Sql" -p (Get-Content coco/prompts/01b_run_risk_class_check.md -Raw)
+```
+
 ## Layout
 
 | Path | Component |
@@ -216,6 +234,8 @@ Deploy: `python scripts/deploy_snowflake.py knowledge` then `... agent`.
 | `sql/006_maintenance_agent.sql`, `src/maintenance_agent.py`, `src/work_orders.py` | Cortex Agent, work-order tool, human approval |
 | `src/business_impact.py` | Predictions → $ downtime cost avoided |
 | `dashboard/app.py` | Unified Command Center + agentic actions |
+| `streamlit_app/` | Streamlit in Snowflake version (`deploy_snowflake.py streamlit`) |
+| `coco/` | Cortex Code CLI prompts and logs |
 | `src/outcomes.py`, `src/data_access.py` | Outcome logging → `ACTION_OUTCOMES` feedback loop |
 | `tests/` | pytest suite |
 

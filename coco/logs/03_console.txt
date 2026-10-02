@@ -1,0 +1,11 @@
+﻿I'll start by reading the Streamlit app and describing the tables it queries.Let me describe all the tables referenced by the app.I've identified all the mismatches. Let me apply the fixes now.Fixing the MODEL_METRICS query — `SCORED_AT` does not exist on that table; the correct column is `TRAINED_AT`.Now replacing the f-string SQL in `load_drivers` with bound parameters.Now replacing `load_sensor_history` — the sensor column name can't be a bind parameter (it's an identifier), so I'll whitelist it against `SENSOR_1..SENSOR_21` and use a bind parameter for `machine_id`.All fixes applied. Here's the summary:
+
+**Fixes made to `streamlit_app/streamlit_app.py`:**
+
+1. **`SCORED_AT` → `TRAINED_AT` in `load_model_metrics()`** (lines 41-42, 83) — The `MODEL_METRICS` table has `TRAINED_AT`, not `SCORED_AT`. Fixed the SELECT list, the ORDER BY clause, and the pandas column reference. This was the startup crash.
+
+2. **Bound parameters in `load_drivers()`** (lines 47-54) — Replaced the f-string that interpolated `machine_id` directly into SQL with `session.sql(..., params=[machine_id])` using a `?` placeholder.
+
+3. **Bound parameters + sensor whitelist in `load_sensor_history()`** (lines 57-69) — Replaced the f-string `machine_id` interpolation with a `?` bind parameter. Since the sensor column name is an identifier (can't be bound), added a `VALID_SENSORS` allowlist (`SENSOR_1` through `SENSOR_21`) that rejects any name not in the set.
+
+**No other column mismatches found.** The remaining queries (`load_fleet`, `load_work_orders`, `load_scoring_runs`, the `ACTION_OUTCOMES` INSERT, the `WORK_ORDERS` UPDATE, and the `REPLAY_QUEUE` count) all reference columns that exist on their respective tables.

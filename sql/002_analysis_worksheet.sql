@@ -86,3 +86,43 @@ SELECT
 FROM ACTION_OUTCOMES
 GROUP BY ACTION_TYPE
 ORDER BY TOTAL_ACTIONS DESC;
+
+
+-- 6. Risk-class calibration: how often does TRUE_RUL fall within the class window?
+WITH joined AS (
+    SELECT
+        fp.RISK_CLASS,
+        fp.RUL_PREDICTION,
+        gt.TRUE_RUL
+    FROM FLEET_PREDICTIONS fp
+    JOIN FLEET_GROUND_TRUTH gt
+      ON gt.MACHINE_ID = fp.MACHINE_ID
+    JOIN MACHINE_DATA m
+      ON m.MACHINE_ID = fp.MACHINE_ID
+    WHERE m.STATUS = 'IN_SERVICE'
+)
+SELECT
+    RISK_CLASS,
+    COUNT(*)                              AS ENGINES,
+    ROUND(AVG(RUL_PREDICTION), 1)         AS AVG_PREDICTED_RUL,
+    ROUND(AVG(TRUE_RUL), 1)              AS AVG_TRUE_RUL,
+    ROUND(
+        SUM(CASE
+            WHEN RISK_CLASS = 'CRITICAL' AND TRUE_RUL <= 15  THEN 1
+            WHEN RISK_CLASS = 'HIGH'     AND TRUE_RUL <= 40  THEN 1
+            WHEN RISK_CLASS = 'MEDIUM'   AND TRUE_RUL <= 90  THEN 1
+            ELSE 0
+        END)::FLOAT
+        / NULLIF(
+            SUM(CASE WHEN RISK_CLASS IN ('CRITICAL','HIGH','MEDIUM') THEN 1 ELSE 0 END),
+            0),
+        3)                                AS FAIL_IN_WINDOW_RATE
+FROM joined
+GROUP BY RISK_CLASS
+ORDER BY
+    CASE RISK_CLASS
+        WHEN 'CRITICAL' THEN 1
+        WHEN 'HIGH'     THEN 2
+        WHEN 'MEDIUM'   THEN 3
+        WHEN 'LOW'      THEN 4
+    END;
