@@ -1,36 +1,42 @@
-"""Availability x Performance x Quality, aggregated per machine over its most recent shifts."""
+"""OEE = Availability x Performance x Quality, adapted to a fleet of engines and
+computed per OPERATING_PERIODS row (src/cmapss.py::operating_periods):
+
+- Availability: flight hours / (flight hours + unplanned repair downtime). A period
+  in which the engine failed carries AVG_UNPLANNED_REPAIR_HOURS of downtime.
+- Performance: the period's average health index — the fraction of healthy-engine
+  performance retained, learned from the real run-to-failure trajectories.
+- Quality: the share of cycles flown with every informative sensor in spec.
+"""
 
 import pandas as pd
 
+import config
 
-def compute_oee(production_df: pd.DataFrame) -> pd.DataFrame:
-    df = production_df.copy()
 
-    run_time_min = df["PLANNED_PRODUCTION_TIME_MIN"] - df["DOWNTIME_MIN"]
-    df["AVAILABILITY"] = run_time_min / df["PLANNED_PRODUCTION_TIME_MIN"]
+def compute_oee(periods_df: pd.DataFrame) -> pd.DataFrame:
+    df = periods_df.copy()
 
-    ideal_run_time_min = (df["IDEAL_CYCLE_TIME_SEC"] * df["TOTAL_COUNT"]) / 60
-    df["PERFORMANCE"] = (ideal_run_time_min / run_time_min).clip(upper=1.0)
-
-    df["QUALITY"] = df["GOOD_COUNT"] / df["TOTAL_COUNT"]
+    flight_hours = df["CYCLES_FLOWN"] * config.HOURS_PER_CYCLE
+    downtime_hours = df["FAILURE_FLAG"].astype(bool) * config.AVG_UNPLANNED_REPAIR_HOURS
+    df["AVAILABILITY"] = flight_hours / (flight_hours + downtime_hours)
+    df["PERFORMANCE"] = df["AVG_HEALTH_INDEX"].clip(0.0, 1.0)
+    df["QUALITY"] = df["IN_SPEC_CYCLES"] / df["CYCLES_FLOWN"]
 
     df["OEE"] = df["AVAILABILITY"] * df["PERFORMANCE"] * df["QUALITY"]
     return df
 
 
-def latest_oee_by_machine(production_df: pd.DataFrame, lookback_shifts: int = 6) -> pd.DataFrame:
-    scored = compute_oee(production_df)
-    scored = scored.sort_values(["MACHINE_ID", "SHIFT_DATE"])
+OEE_COLUMNS = ["AVAILABILITY", "PERFORMANCE", "QUALITY", "OEE"]
 
-    def _tail_mean(group: pd.DataFrame) -> pd.Series:
-        recent = group.tail(lookback_shifts)
-        return pd.Series(
-            {
-                "AVAILABILITY": recent["AVAILABILITY"].mean(),
-                "PERFORMANCE": recent["PERFORMANCE"].mean(),
-                "QUALITY": recent["QUALITY"].mean(),
-                "OEE": recent["OEE"].mean(),
-            }
-        )
 
-    return scored.groupby("MACHINE_ID").apply(_tail_mean, include_groups=False).reset_index()
+def latest_oee_by_machine(periods_df: pd.DataFrame, lookback_periods: int = 3) -> pd.DataFrame:
+    """Each machine's OEE averaged over its most recent periods."""
+    scored = compute_oee(periods_df).sort_values(["MACHINE_ID", "PERIOD_INDEX"])
+    recent = scored.groupby("MACHINE_ID").tail(lookback_periods)
+    return recent.groupby("MACHINE_ID")[OEE_COLUMNS].mean().reset_index()
+
+
+def oee_by_fleet(periods_df: pd.DataFrame, machines_df: pd.DataFrame) -> pd.DataFrame:
+    """Lifetime OEE per fleet across every period of every engine, failed or not."""
+    scored = compute_oee(periods_df).merge(machines_df[["MACHINE_ID", "FLEET"]], on="MACHINE_ID")
+    return scored.groupby("FLEET")[OEE_COLUMNS].mean().reset_index()

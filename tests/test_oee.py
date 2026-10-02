@@ -1,59 +1,59 @@
 import pandas as pd
+import pytest
 
-from src.oee import compute_oee, latest_oee_by_machine
+import config
+from src.oee import compute_oee, latest_oee_by_machine, oee_by_fleet
 
 
-def _row(**overrides):
+def _period(**overrides):
     row = {
-        "MACHINE_ID": "M-001",
-        "SHIFT_DATE": "2026-01-01",
-        "SHIFT": "DAY",
-        "PLANNED_PRODUCTION_TIME_MIN": 480,
-        "DOWNTIME_MIN": 0,
-        "IDEAL_CYCLE_TIME_SEC": 10.0,
-        "TOTAL_COUNT": 2880,  # exactly fills 480 min at 10s/unit -> performance = 1.0
-        "GOOD_COUNT": 2880,   # no defects -> quality = 1.0
+        "MACHINE_ID": "FD001-ENG-001",
+        "PERIOD_INDEX": 0,
+        "START_CYCLE": 1,
+        "END_CYCLE": 10,
+        "CYCLES_FLOWN": 10,
+        "IN_SPEC_CYCLES": 10,
+        "AVG_HEALTH_INDEX": 1.0,
+        "FAILURE_FLAG": False,
     }
     row.update(overrides)
     return row
 
 
-def test_compute_oee_perfect_shift_is_100_percent():
-    df = pd.DataFrame([_row()])
-    scored = compute_oee(df)
-    assert scored.loc[0, "AVAILABILITY"] == 1.0
-    assert scored.loc[0, "PERFORMANCE"] == 1.0
-    assert scored.loc[0, "QUALITY"] == 1.0
-    assert scored.loc[0, "OEE"] == 1.0
+def test_healthy_period_without_failure_is_100_percent():
+    scored = compute_oee(pd.DataFrame([_period()])).iloc[0]
+    assert (scored["AVAILABILITY"], scored["PERFORMANCE"], scored["QUALITY"], scored["OEE"]) == (1.0, 1.0, 1.0, 1.0)
 
 
-def test_compute_oee_downtime_reduces_availability():
-    df = pd.DataFrame([_row(DOWNTIME_MIN=60, TOTAL_COUNT=2520, GOOD_COUNT=2520)])
-    scored = compute_oee(df)
-    assert scored.loc[0, "AVAILABILITY"] == (480 - 60) / 480
-    assert round(scored.loc[0, "PERFORMANCE"], 4) == 1.0
+def test_failure_adds_unplanned_repair_downtime():
+    scored = compute_oee(pd.DataFrame([_period(FAILURE_FLAG=True)])).iloc[0]
+    flight_hours = 10 * config.HOURS_PER_CYCLE
+    assert scored["AVAILABILITY"] == pytest.approx(flight_hours / (flight_hours + config.AVG_UNPLANNED_REPAIR_HOURS))
 
 
-def test_compute_oee_defects_reduce_quality():
-    df = pd.DataFrame([_row(GOOD_COUNT=2736)])  # 5% defective
-    scored = compute_oee(df)
-    assert round(scored.loc[0, "QUALITY"], 4) == 0.95
+def test_out_of_spec_cycles_reduce_quality():
+    assert compute_oee(pd.DataFrame([_period(IN_SPEC_CYCLES=7)])).iloc[0]["QUALITY"] == pytest.approx(0.7)
 
 
-def test_compute_oee_performance_is_capped_at_one():
-    # TOTAL_COUNT implying faster-than-ideal throughput shouldn't push performance above 1.0
-    df = pd.DataFrame([_row(TOTAL_COUNT=5000, GOOD_COUNT=5000)])
-    scored = compute_oee(df)
-    assert scored.loc[0, "PERFORMANCE"] == 1.0
+def test_performance_is_health_index_clipped_to_unit_interval():
+    scored = compute_oee(pd.DataFrame([_period(AVG_HEALTH_INDEX=1.2), _period(AVG_HEALTH_INDEX=-0.1)]))
+    assert list(scored["PERFORMANCE"]) == [1.0, 0.0]
 
 
-def test_latest_oee_by_machine_averages_recent_shifts():
-    rows = [
-        _row(SHIFT_DATE=f"2026-01-{d:02d}", DOWNTIME_MIN=60 if d == 1 else 0,
-             TOTAL_COUNT=2520 if d == 1 else 2880, GOOD_COUNT=2520 if d == 1 else 2880)
-        for d in range(1, 4)
-    ]
-    df = pd.DataFrame(rows)
-    result = latest_oee_by_machine(df, lookback_shifts=3)
-    assert list(result["MACHINE_ID"]) == ["M-001"]
-    assert 0.0 < result.loc[0, "AVAILABILITY"] < 1.0
+def test_latest_oee_uses_only_the_most_recent_periods():
+    periods = pd.DataFrame([
+        _period(PERIOD_INDEX=0, IN_SPEC_CYCLES=0),   # old and bad: outside the lookback
+        _period(PERIOD_INDEX=1),
+        _period(PERIOD_INDEX=2, AVG_HEALTH_INDEX=0.5),
+    ])
+    result = latest_oee_by_machine(periods, lookback_periods=2).iloc[0]
+    assert result["QUALITY"] == 1.0
+    assert result["PERFORMANCE"] == pytest.approx(0.75)
+
+
+def test_oee_by_fleet_groups_machines():
+    periods = pd.DataFrame([_period(MACHINE_ID="A"), _period(MACHINE_ID="B", IN_SPEC_CYCLES=5)])
+    machines = pd.DataFrame({"MACHINE_ID": ["A", "B"], "FLEET": ["FD001", "FD002"]})
+    result = oee_by_fleet(periods, machines).set_index("FLEET")
+    assert result.loc["FD001", "OEE"] == 1.0
+    assert result.loc["FD002", "OEE"] == pytest.approx(0.5)

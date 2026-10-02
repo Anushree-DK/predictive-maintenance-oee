@@ -1,21 +1,22 @@
 # Semantic model for Cortex Analyst — natural-language questions over the
-# business tables (not RAW_SENSOR_DATA, which is high-frequency telemetry and
-# a poor fit for NL Q&A; that's what src/feature_engineering.py + the ML model
-# are for). This describes MACHINE_DATA / MAINTENANCE_HISTORY / PRODUCTION_DATA
-# / ACTION_OUTCOMES so a plant manager can ask things like "which line has the
-# worst OEE this month" or "how many work orders did we create this week."
+# business tables (not RAW_SENSOR_DATA, which is per-cycle telemetry and a poor
+# fit for NL Q&A; that's what src/feature_engineering.py + the ML model are for).
+# Lets a fleet manager ask things like "which fleet has the worst OEE" or "how many
+# work orders did we create this week".
 #
-# Schema verified against Snowflake's current Semantic View YAML spec
+# Schema follows Snowflake's Semantic View YAML spec
 # (docs.snowflake.com/en/user-guide/views-semantic/semantic-view-yaml-spec).
 # NOT YET APPLIED to any Snowflake account — see sql/004_create_semantic_view.sql.
 
 name: PM_SEMANTIC_MODEL
 description: >
-  Predictive maintenance fleet: machines, their maintenance history,
-  production/OEE performance, and AI-recommended actions taken on them.
+  Turbofan engine fleets from NASA's C-MAPSS dataset: engines, their real
+  run-to-failure events, per-period OEE inputs, and AI-recommended actions.
+  One cycle is one flight.
 
 tables:
   - name: MACHINE
+    description: One row per engine, in service or already failed.
     base_table:
       database: PDM
       schema: PUBLIC
@@ -26,27 +27,33 @@ tables:
       - name: machine_id
         expr: MACHINE_ID
         data_type: VARCHAR
-        description: Unique identifier for the machine.
-      - name: machine_name
-        expr: MACHINE_NAME
+        description: Unique engine identifier, e.g. FD002-ENG-017.
+        synonyms: ["engine", "engine id", "asset"]
+      - name: fleet
+        expr: FLEET
         data_type: VARCHAR
-        description: Human-readable machine name.
-      - name: line
-        expr: LINE
+        description: Fleet the engine belongs to (FD001, FD002, FD003, FD004).
+        synonyms: ["line", "fleet name", "subset"]
+      - name: operating_conditions
+        expr: OPERATING_CONDITIONS
         data_type: VARCHAR
-        description: Production line the machine belongs to.
-        synonyms: ["production line", "shop floor line"]
-      - name: model
-        expr: MODEL
+        description: Number of operating conditions the fleet flies under.
+      - name: fault_modes
+        expr: FAULT_MODES
         data_type: VARCHAR
-        description: Machine model/type.
-    time_dimensions:
-      - name: install_date
-        expr: INSTALL_DATE
-        data_type: DATE
-        description: Date the machine was installed.
+        description: Degradation modes present in the fleet (HPC and/or fan degradation).
+      - name: status
+        expr: STATUS
+        data_type: VARCHAR
+        description: IN_SERVICE (still flying) or FAILED (ran until failure).
+    facts:
+      - name: cycles_observed
+        expr: CYCLES_OBSERVED
+        data_type: NUMBER
+        description: Flight cycles recorded for the engine.
 
   - name: MAINTENANCE
+    description: Real failure events — one per FAILED engine.
     base_table:
       database: PDM
       schema: PUBLIC
@@ -54,59 +61,72 @@ tables:
     primary_key:
       columns: [EVENT_ID]
     dimensions:
+      - name: machine_id
+        expr: MACHINE_ID
+        data_type: VARCHAR
       - name: event_type
         expr: EVENT_TYPE
         data_type: VARCHAR
-        description: >
-          Type of maintenance event: PREVENTIVE, INSPECTION, or CORRECTIVE
-          (CORRECTIVE means an unplanned repair after something broke).
+        description: UNPLANNED_FAILURE — the engine ran until it failed.
       - name: description
         expr: DESCRIPTION
         data_type: VARCHAR
-    time_dimensions:
-      - name: event_date
-        expr: EVENT_DATE
-        data_type: DATE
     facts:
-      - name: downtime_minutes
-        expr: DOWNTIME_MINUTES
+      - name: event_cycle
+        expr: EVENT_CYCLE
         data_type: NUMBER
-        description: Minutes of downtime caused by this maintenance event.
+        description: Cycle at which the engine failed, i.e. its total life in cycles.
+        synonyms: ["life", "cycles to failure"]
 
-  - name: PRODUCTION
+  - name: OPERATING_PERIOD
+    description: OEE inputs per engine per 10-cycle period, derived from sensor data.
     base_table:
       database: PDM
       schema: PUBLIC
-      table: PRODUCTION_DATA
+      table: OPERATING_PERIODS
     dimensions:
-      - name: shift
-        expr: SHIFT
+      - name: machine_id
+        expr: MACHINE_ID
         data_type: VARCHAR
-        description: DAY or NIGHT shift.
-    time_dimensions:
-      - name: shift_date
-        expr: SHIFT_DATE
-        data_type: DATE
+      - name: failure_flag
+        expr: FAILURE_FLAG
+        data_type: BOOLEAN
+        description: The engine failed during this period.
     facts:
-      - name: planned_production_time_min
-        expr: PLANNED_PRODUCTION_TIME_MIN
+      - name: period_index
+        expr: PERIOD_INDEX
         data_type: NUMBER
-      - name: downtime_min
-        expr: DOWNTIME_MIN
+      - name: cycles_flown
+        expr: CYCLES_FLOWN
         data_type: NUMBER
-      - name: ideal_cycle_time_sec
-        expr: IDEAL_CYCLE_TIME_SEC
+      - name: in_spec_cycles
+        expr: IN_SPEC_CYCLES
+        data_type: NUMBER
+        description: Cycles with every monitored sensor within 3 standard deviations of a healthy engine.
+      - name: avg_health_index
+        expr: AVG_HEALTH_INDEX
         data_type: FLOAT
-      - name: total_count
-        expr: TOTAL_COUNT
-        data_type: NUMBER
-        description: Total units produced in the shift.
-      - name: good_count
-        expr: GOOD_COUNT
-        data_type: NUMBER
-        description: Units produced that passed quality checks.
+        description: 1 = healthy, 0 = at failure.
+    metrics:
+      - name: availability
+        expr: AVG((CYCLES_FLOWN * 2.0) / (CYCLES_FLOWN * 2.0 + IFF(FAILURE_FLAG, 18, 0)))
+        description: Flight hours over flight hours plus unplanned repair downtime.
+      - name: performance
+        expr: AVG(LEAST(GREATEST(AVG_HEALTH_INDEX, 0), 1))
+        description: Average health index — share of healthy-engine performance retained.
+      - name: quality
+        expr: AVG(IN_SPEC_CYCLES / CYCLES_FLOWN)
+        description: Share of cycles flown with every sensor in spec.
+      - name: oee
+        expr: >
+          AVG((CYCLES_FLOWN * 2.0) / (CYCLES_FLOWN * 2.0 + IFF(FAILURE_FLAG, 18, 0))
+              * LEAST(GREATEST(AVG_HEALTH_INDEX, 0), 1)
+              * (IN_SPEC_CYCLES / CYCLES_FLOWN))
+        description: Overall Equipment Effectiveness = availability x performance x quality.
+        synonyms: ["overall equipment effectiveness"]
 
   - name: ACTION
+    description: Actions the AI recommended and a human confirmed, with their outcome.
     base_table:
       database: PDM
       schema: PUBLIC
@@ -114,12 +134,14 @@ tables:
     primary_key:
       columns: [ACTION_ID]
     dimensions:
+      - name: machine_id
+        expr: MACHINE_ID
+        data_type: VARCHAR
       - name: action_type
         expr: ACTION_TYPE
         data_type: VARCHAR
-        description: >
-          CREATE_WORK_ORDER, SCHEDULE_REPAIR, or RECOMMEND_PARTS — the
-          agentic action the AI recommended and a human confirmed.
+        description: Create Work Order, Schedule Repair, or Recommend Parts.
+        synonyms: ["work order", "action"]
       - name: risk_class_at_action
         expr: RISK_CLASS_AT_ACTION
         data_type: VARCHAR
@@ -136,9 +158,12 @@ tables:
     facts:
       - name: rul_prediction_at_action
         expr: RUL_PREDICTION_AT_ACTION
-        data_type: NUMBER
-      - name: confidence_at_action
-        expr: CONFIDENCE_AT_ACTION
+        data_type: FLOAT
+      - name: rul_lower_at_action
+        expr: RUL_LOWER_AT_ACTION
+        data_type: FLOAT
+      - name: failure_probability_at_action
+        expr: FAILURE_PROBABILITY_AT_ACTION
         data_type: FLOAT
 
 relationships:
@@ -148,8 +173,8 @@ relationships:
     relationship_columns:
       - left_column: MACHINE_ID
         right_column: MACHINE_ID
-  - name: production_to_machine
-    left_table: PRODUCTION
+  - name: period_to_machine
+    left_table: OPERATING_PERIOD
     right_table: MACHINE
     relationship_columns:
       - left_column: MACHINE_ID

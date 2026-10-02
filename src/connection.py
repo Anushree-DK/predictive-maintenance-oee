@@ -53,7 +53,7 @@ def get_session():
     global _session
     if config.SNOWFLAKE_MODE != "snowflake":
         raise RuntimeError(
-            "SNOWFLAKE_MODE is 'mock' — no Snowpark session needed. "
+            "SNOWFLAKE_MODE is 'local' — no Snowpark session needed. "
             "Set SNOWFLAKE_MODE=snowflake in .env once you have a trial account."
         )
     if _session is None:

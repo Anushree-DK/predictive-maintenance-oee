@@ -1,20 +1,26 @@
--- Run this once against a real Snowflake account (SNOWFLAKE_MODE=snowflake).
--- Table shapes mirror data/mock/*.csv so the pipeline code doesn't change between modes.
+-- Run this once against a Snowflake account (SNOWFLAKE_MODE=snowflake).
+-- Table shapes mirror data/processed/*.csv, which scripts/load_cmapss.py builds
+-- from the real NASA C-MAPSS dataset (see DATA_SOURCES.md).
 
 CREATE DATABASE IF NOT EXISTS PDM;
 CREATE SCHEMA IF NOT EXISTS PDM.PUBLIC;
 USE SCHEMA PDM.PUBLIC;
 
-CREATE TABLE IF NOT EXISTS MACHINE_DATA (
-    MACHINE_ID       STRING PRIMARY KEY,
-    MACHINE_NAME     STRING,
-    LINE             STRING,
-    MODEL            STRING,
-    INSTALL_DATE     DATE
+-- One row per engine. FLEET = C-MAPSS subset; FAILED engines are the run-to-failure
+-- (train) trajectories, IN_SERVICE engines the not-yet-failed (test) trajectories.
+CREATE OR REPLACE TABLE MACHINE_DATA (
+    MACHINE_ID           STRING PRIMARY KEY,   -- e.g. FD002-ENG-017 / FD002-HIST-017
+    FLEET                STRING,               -- FD001..FD004
+    UNIT_NUMBER          NUMBER,               -- unit number in the NASA source file
+    SOURCE_FILE          STRING,               -- e.g. test_FD002.txt
+    OPERATING_CONDITIONS STRING,
+    FAULT_MODES          STRING,
+    STATUS               STRING,               -- IN_SERVICE | FAILED
+    CYCLES_OBSERVED      NUMBER
 );
 
--- One row per (machine, time_cycle), NASA C-MAPSS-shaped: 3 operational settings, 21 sensors.
-CREATE TABLE IF NOT EXISTS RAW_SENSOR_DATA (
+-- One row per (engine, cycle): 3 operational settings, 21 sensors, as recorded by NASA.
+CREATE OR REPLACE TABLE RAW_SENSOR_DATA (
     MACHINE_ID       STRING,
     TIME_CYCLE       NUMBER,
     OP_SETTING_1     FLOAT,
@@ -25,42 +31,71 @@ CREATE TABLE IF NOT EXISTS RAW_SENSOR_DATA (
     SENSOR_9         FLOAT, SENSOR_10 FLOAT, SENSOR_11 FLOAT, SENSOR_12 FLOAT,
     SENSOR_13        FLOAT, SENSOR_14 FLOAT, SENSOR_15 FLOAT, SENSOR_16 FLOAT,
     SENSOR_17        FLOAT, SENSOR_18 FLOAT, SENSOR_19 FLOAT, SENSOR_20 FLOAT,
-    SENSOR_21        FLOAT,
-    RECORDED_AT      TIMESTAMP_NTZ
+    SENSOR_21        FLOAT
 );
 
-CREATE TABLE IF NOT EXISTS MAINTENANCE_HISTORY (
+-- One real failure event per FAILED engine, at the last cycle of its trajectory.
+CREATE OR REPLACE TABLE MAINTENANCE_HISTORY (
     EVENT_ID         STRING PRIMARY KEY,
     MACHINE_ID       STRING,
-    EVENT_DATE       DATE,
-    EVENT_TYPE       STRING,      -- e.g. PREVENTIVE, CORRECTIVE, INSPECTION
-    DESCRIPTION      STRING,
-    DOWNTIME_MINUTES NUMBER
+    EVENT_CYCLE      NUMBER,
+    EVENT_TYPE       STRING,      -- UNPLANNED_FAILURE
+    DESCRIPTION      STRING
 );
 
-CREATE TABLE IF NOT EXISTS PRODUCTION_DATA (
-    MACHINE_ID                  STRING,
-    SHIFT_DATE                  DATE,
-    SHIFT                       STRING,
-    PLANNED_PRODUCTION_TIME_MIN NUMBER,
-    DOWNTIME_MIN                NUMBER,
-    IDEAL_CYCLE_TIME_SEC        FLOAT,
-    TOTAL_COUNT                 NUMBER,
-    GOOD_COUNT                  NUMBER
+-- OEE inputs per engine per 10-cycle period, derived from RAW_SENSOR_DATA
+-- (src/cmapss.py::operating_periods; formula in src/oee.py).
+CREATE OR REPLACE TABLE OPERATING_PERIODS (
+    MACHINE_ID       STRING,
+    PERIOD_INDEX     NUMBER,
+    START_CYCLE      NUMBER,
+    END_CYCLE        NUMBER,
+    CYCLES_FLOWN     NUMBER,
+    IN_SPEC_CYCLES   NUMBER,      -- cycles with every informative sensor within 3σ of healthy
+    AVG_HEALTH_INDEX FLOAT,       -- 1 = healthy, 0 = failure
+    FAILURE_FLAG     BOOLEAN
+);
+
+-- Per-operating-regime sensor mean/std (from FAILED engines only), used to z-score
+-- sensors before feature engineering. REGIME = ROUND(OP_SETTING_1).
+CREATE OR REPLACE TABLE REGIME_SENSOR_STATS (
+    REGIME NUMBER,
+    SENSOR_1_MEAN FLOAT, SENSOR_2_MEAN FLOAT, SENSOR_3_MEAN FLOAT, SENSOR_4_MEAN FLOAT,
+    SENSOR_5_MEAN FLOAT, SENSOR_6_MEAN FLOAT, SENSOR_7_MEAN FLOAT, SENSOR_8_MEAN FLOAT,
+    SENSOR_9_MEAN FLOAT, SENSOR_10_MEAN FLOAT, SENSOR_11_MEAN FLOAT, SENSOR_12_MEAN FLOAT,
+    SENSOR_13_MEAN FLOAT, SENSOR_14_MEAN FLOAT, SENSOR_15_MEAN FLOAT, SENSOR_16_MEAN FLOAT,
+    SENSOR_17_MEAN FLOAT, SENSOR_18_MEAN FLOAT, SENSOR_19_MEAN FLOAT, SENSOR_20_MEAN FLOAT,
+    SENSOR_21_MEAN FLOAT,
+    SENSOR_1_STD FLOAT, SENSOR_2_STD FLOAT, SENSOR_3_STD FLOAT, SENSOR_4_STD FLOAT,
+    SENSOR_5_STD FLOAT, SENSOR_6_STD FLOAT, SENSOR_7_STD FLOAT, SENSOR_8_STD FLOAT,
+    SENSOR_9_STD FLOAT, SENSOR_10_STD FLOAT, SENSOR_11_STD FLOAT, SENSOR_12_STD FLOAT,
+    SENSOR_13_STD FLOAT, SENSOR_14_STD FLOAT, SENSOR_15_STD FLOAT, SENSOR_16_STD FLOAT,
+    SENSOR_17_STD FLOAT, SENSOR_18_STD FLOAT, SENSOR_19_STD FLOAT, SENSOR_20_STD FLOAT,
+    SENSOR_21_STD FLOAT
+);
+
+-- NASA's true RUL for each IN_SERVICE engine (RUL_FD00X.txt). Evaluation only —
+-- the live pipeline never reads it.
+CREATE OR REPLACE TABLE FLEET_GROUND_TRUTH (
+    MACHINE_ID          STRING PRIMARY KEY,
+    LAST_OBSERVED_CYCLE NUMBER,
+    TRUE_RUL            NUMBER
 );
 
 -- Logs what happened after each agentic action, closing the feedback loop.
+-- IF NOT EXISTS: re-running this script must not wipe logged actions.
 CREATE TABLE IF NOT EXISTS ACTION_OUTCOMES (
-    ACTION_ID              STRING PRIMARY KEY,
-    MACHINE_ID              STRING,
-    ACTION_TYPE             STRING,   -- CREATE_WORK_ORDER, SCHEDULE_REPAIR, RECOMMEND_PARTS
-    RECOMMENDED_AT           TIMESTAMP_NTZ,
-    RUL_PREDICTION_AT_ACTION NUMBER,
-    RISK_CLASS_AT_ACTION     STRING,
-    CONFIDENCE_AT_ACTION     FLOAT,
-    TAKEN_FLAG               BOOLEAN,
-    TAKEN_AT                 TIMESTAMP_NTZ,
-    FAILURE_OCCURRED_FLAG    BOOLEAN,
-    FAILURE_DATE             DATE,
-    NOTES                    STRING
+    ACTION_ID                     STRING PRIMARY KEY,
+    MACHINE_ID                    STRING,
+    ACTION_TYPE                   STRING,   -- Create Work Order, Schedule Repair, Recommend Parts
+    RECOMMENDED_AT                TIMESTAMP_NTZ,
+    RUL_PREDICTION_AT_ACTION      FLOAT,
+    RUL_LOWER_AT_ACTION           FLOAT,
+    FAILURE_PROBABILITY_AT_ACTION FLOAT,
+    RISK_CLASS_AT_ACTION          STRING,
+    TAKEN_FLAG                    BOOLEAN,
+    TAKEN_AT                      TIMESTAMP_NTZ,
+    FAILURE_OCCURRED_FLAG         BOOLEAN,
+    FAILURE_DATE                  DATE,
+    NOTES                         STRING
 );

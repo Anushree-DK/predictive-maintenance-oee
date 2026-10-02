@@ -10,3 +10,5 @@ snowflake-snowpark-python>=1.14
 # Pinned: newer cryptography versions (a snowpark transitive dep) ship no
 # Python 3.9 wheel and fall back to a slow Rust source build. 48.0.1 has one.
 cryptography==48.0.1
+# Tests only: runs the Snowflake feature SQL locally to check it matches pandas.
+duckdb>=1.0

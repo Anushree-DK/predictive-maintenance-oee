@@ -1,93 +1,121 @@
-"""Turns raw per-cycle sensor readings into one feature row per machine
-(rolling stats + degradation slope), which is what the RUL model consumes.
+"""Turns raw per-cycle sensor readings into model features: each sensor is z-scored
+against its operating regime (src/cmapss.py::zscore_by_regime), then summarized over
+a rolling window as mean, std, least-squares slope, and latest value.
+
+The same features exist in two implementations that must agree: pandas
+(build_feature_history) and Snowflake SQL window functions (build_feature_sql).
+tests/test_feature_engineering.py checks them against each other.
 """
+
+from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 
 import config
+from src.cmapss import zscore_by_regime
 
 ROLLING_WINDOW = 15
+SUFFIXES = ("_MEAN", "_STD", "_SLOPE", "_LAST")
 
 
-def _degradation_slope(series: pd.Series) -> float:
-    """Linear-fit slope of a sensor over its most recent cycles — a simple,
-    interpretable stand-in for 'is this sensor trending worse.'"""
-    if len(series) < 2:
-        return 0.0
-    x = np.arange(len(series))
-    slope, _ = np.polyfit(x, series.to_numpy(), 1)
-    return float(slope)
+def feature_columns() -> list[str]:
+    return ["TIME_CYCLE"] + [f"{s}{suffix}" for s in config.SENSOR_COLUMNS for suffix in SUFFIXES]
 
 
-def build_features_for_group(group: pd.DataFrame) -> dict:
-    group = group.sort_values("TIME_CYCLE")
-    recent = group.tail(ROLLING_WINDOW)
+def build_feature_history(
+    raw_sensor_df: pd.DataFrame, stats: pd.DataFrame, group_col: str = "MACHINE_ID"
+) -> pd.DataFrame:
+    """One feature row per (group, cycle), each using only that cycle and the
+    ROLLING_WINDOW - 1 before it — what training needs, and causal by construction."""
+    df = zscore_by_regime(raw_sensor_df, stats).sort_values([group_col, "TIME_CYCLE"]).reset_index(drop=True)
+    x = df["TIME_CYCLE"].astype(float)
+    keys = df[group_col]
 
-    features = {"TIME_CYCLE": int(group["TIME_CYCLE"].max())}
+    def rolling_sum(series: pd.Series) -> pd.Series:
+        return series.groupby(keys).rolling(ROLLING_WINDOW, min_periods=1).sum().reset_index(level=0, drop=True)
+
+    n = rolling_sum(pd.Series(1.0, index=df.index))
+    sum_x, sum_xx = rolling_sum(x), rolling_sum(x * x)
+    slope_denominator = (n * sum_xx - sum_x * sum_x).replace(0, np.nan)
+
+    features = {group_col: df[group_col], "TIME_CYCLE": df["TIME_CYCLE"]}
     for col in config.SENSOR_COLUMNS:
-        if col not in group.columns:
-            continue
-        features[f"{col}_MEAN"] = float(recent[col].mean())
-        features[f"{col}_STD"] = float(recent[col].std(ddof=0))
-        features[f"{col}_SLOPE"] = _degradation_slope(recent[col])
-        features[f"{col}_LAST"] = float(group[col].iloc[-1])
-    return features
+        y = df[col]
+        sum_y, sum_yy, sum_xy = rolling_sum(y), rolling_sum(y * y), rolling_sum(x * y)
+        mean = sum_y / n
+        features[f"{col}_MEAN"] = mean
+        features[f"{col}_STD"] = np.sqrt((sum_yy / n - mean * mean).clip(lower=0))
+        features[f"{col}_SLOPE"] = ((n * sum_xy - sum_x * sum_y) / slope_denominator).fillna(0.0)
+        features[f"{col}_LAST"] = y
+    return pd.DataFrame(features)
 
 
-def build_feature_table(raw_sensor_df: pd.DataFrame, group_col: str = "MACHINE_ID") -> pd.DataFrame:
-    """One row per group_col (machine or training unit) summarizing its latest condition."""
-    rows = []
-    for key, group in raw_sensor_df.groupby(group_col):
-        feats = build_features_for_group(group)
-        feats[group_col] = key
-        rows.append(feats)
-    df = pd.DataFrame(rows)
-    id_cols = [group_col, "TIME_CYCLE"]
-    return df[id_cols + [c for c in df.columns if c not in id_cols]]
+def build_feature_table(
+    raw_sensor_df: pd.DataFrame, stats: pd.DataFrame, group_col: str = "MACHINE_ID"
+) -> pd.DataFrame:
+    """Latest feature row per group — the machine's current condition."""
+    history = build_feature_history(raw_sensor_df, stats, group_col=group_col)
+    return history.groupby(group_col).tail(1).reset_index(drop=True)
 
 
-def build_feature_table_sql(group_col: str = "MACHINE_ID", table_name: str = "RAW_SENSOR_DATA") -> pd.DataFrame:
-    """Same rolling mean/std/slope/last features as build_feature_table, computed as SQL
-    window functions in Snowflake instead of pulling raw rows into pandas first. Only used
-    when SNOWFLAKE_MODE=snowflake.
+def build_feature_sql(
+    group_col: str = "MACHINE_ID",
+    sensor_table: str = "RAW_SENSOR_DATA",
+    stats_table: str = "REGIME_SENSOR_STATS",
+    where: str | None = None,
+    latest_only: bool = True,
+) -> str:
+    """The same features as build_feature_history, as one SQL query.
 
-    The slope is the closed-form least-squares formula, not REGR_SLOPE: Snowflake's
-    regression window functions only support unbounded frames, not a bounded rolling
-    window (ROWS BETWEEN n PRECEDING), so it's expanded from SUM()/COUNT() aggregates,
-    which do support bounded frames.
+    The slope is the closed-form least-squares formula rather than REGR_SLOPE:
+    Snowflake's regression window functions only support unbounded frames, not a
+    bounded rolling window, so it's expanded from SUM()/COUNT() aggregates, which do.
+    Population std is expanded the same way, to match pandas exactly.
     """
-    from src.connection import get_session
-
     window = f"PARTITION BY {group_col} ORDER BY TIME_CYCLE ROWS BETWEEN {ROLLING_WINDOW - 1} PRECEDING AND CURRENT ROW"
     n = f"COUNT(*) OVER ({window})"
     sum_x = f"SUM(TIME_CYCLE) OVER ({window})"
     sum_xx = f"SUM(TIME_CYCLE * TIME_CYCLE) OVER ({window})"
 
-    sensor_exprs = []
+    z_exprs, feature_exprs = [], []
     for col in config.SENSOR_COLUMNS:
+        z_exprs.append(f"(r.{col} - s.{col}_MEAN) / s.{col}_STD AS {col}")
         sum_y = f"SUM({col}) OVER ({window})"
-        sum_xy = f"SUM(TIME_CYCLE * {col}) OVER ({window})"
-        slope = f"({n} * {sum_xy} - {sum_x} * {sum_y}) / NULLIF({n} * {sum_xx} - {sum_x} * {sum_x}, 0)"
-        sensor_exprs.append(f"AVG({col}) OVER ({window}) AS {col}_MEAN")
-        sensor_exprs.append(f"STDDEV_POP({col}) OVER ({window}) AS {col}_STD")
-        sensor_exprs.append(f"{slope} AS {col}_SLOPE")
-        sensor_exprs.append(f"{col} AS {col}_LAST")
+        mean = f"({sum_y} / {n})"
+        slope = f"({n} * SUM(TIME_CYCLE * {col}) OVER ({window}) - {sum_x} * {sum_y}) / NULLIF({n} * {sum_xx} - {sum_x} * {sum_x}, 0)"
+        feature_exprs += [
+            f"{mean} AS {col}_MEAN",
+            f"SQRT(GREATEST(SUM({col} * {col}) OVER ({window}) / {n} - {mean} * {mean}, 0)) AS {col}_STD",
+            f"COALESCE({slope}, 0) AS {col}_SLOPE",
+            f"{col} AS {col}_LAST",
+        ]
 
-    query = f"""
-        SELECT {group_col}, TIME_CYCLE, {", ".join(sensor_exprs)}
-        FROM {table_name}
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY {group_col} ORDER BY TIME_CYCLE DESC) = 1
+    qualify = f"QUALIFY ROW_NUMBER() OVER (PARTITION BY {group_col} ORDER BY TIME_CYCLE DESC) = 1" if latest_only else ""
+    return f"""
+        WITH z AS (
+            SELECT r.{group_col}, r.TIME_CYCLE, {", ".join(z_exprs)}
+            FROM {sensor_table} r
+            JOIN {stats_table} s ON s.REGIME = ROUND(r.OP_SETTING_1)
+            {f"WHERE {where}" if where else ""}
+        )
+        SELECT {group_col}, TIME_CYCLE, {", ".join(feature_exprs)}
+        FROM z
+        {qualify}
+        ORDER BY {group_col}
     """
-    return get_session().sql(query).to_pandas()
 
 
 def get_feature_table(group_col: str = "MACHINE_ID") -> pd.DataFrame:
-    """Entry point pipeline code should call: pushes down to Snowflake SQL when
+    """Current features for the in-service fleet. Pushes down to Snowflake SQL when
     SNOWFLAKE_MODE=snowflake, otherwise computes the same features in pandas."""
-    if config.SNOWFLAKE_MODE == "snowflake":
-        return build_feature_table_sql(group_col=group_col)
-
     from src import data_access
 
-    return build_feature_table(data_access.load_raw_sensor_data(), group_col=group_col)
+    if config.SNOWFLAKE_MODE == "snowflake":
+        from src.connection import get_session
+
+        where = f"r.{group_col} IN (SELECT MACHINE_ID FROM MACHINE_DATA WHERE STATUS = 'IN_SERVICE')"
+        return get_session().sql(build_feature_sql(group_col=group_col, where=where)).to_pandas()
+
+    sensors = data_access.load_in_service_sensor_data()
+    return build_feature_table(sensors, data_access.load_regime_sensor_stats(), group_col=group_col)

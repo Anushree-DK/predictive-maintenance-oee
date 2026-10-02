@@ -1,0 +1,121 @@
+{
+  "evaluated_on": "NASA C-MAPSS official test set (RUL_FD00X.txt), last observed cycle of each engine",
+  "truth": "true RUL capped at 125, matching the training label",
+  "rul": {
+    "overall": {
+      "rmse": 15.09,
+      "mae": 10.8,
+      "nasa_score": 3094.0,
+      "n_engines": 707
+    },
+    "per_fleet": {
+      "FD001": {
+        "rmse": 13.89,
+        "mae": 9.8,
+        "nasa_score": 315.9,
+        "n_engines": 100
+      },
+      "FD002": {
+        "rmse": 15.13,
+        "mae": 11.03,
+        "nasa_score": 1098.6,
+        "n_engines": 259
+      },
+      "FD003": {
+        "rmse": 14.3,
+        "mae": 10.52,
+        "nasa_score": 430.1,
+        "n_engines": 100
+      },
+      "FD004": {
+        "rmse": 15.82,
+        "mae": 11.08,
+        "nasa_score": 1249.5,
+        "n_engines": 248
+      }
+    },
+    "overall_vs_uncapped_truth": {
+      "rmse": 24.46,
+      "mae": 16.97,
+      "nasa_score": 14175.0,
+      "n_engines": 707
+    }
+  },
+  "rul_interval": {
+    "target_coverage": 0.9,
+    "empirical_coverage": 0.883,
+    "mean_width_cycles": 45.8,
+    "conformal_margins_by_band": {
+      "0-30": 0.78,
+      "30-60": 4.53,
+      "60-100": 3.87,
+      "100-125": 0.08
+    },
+    "by_predicted_rul_band": {
+      "0-30": {
+        "n_engines": 149,
+        "coverage": 0.839,
+        "mean_width_cycles": 33.3
+      },
+      "30-60": {
+        "n_engines": 102,
+        "coverage": 0.902,
+        "mean_width_cycles": 62.4
+      },
+      "60-100": {
+        "n_engines": 178,
+        "coverage": 0.961,
+        "mean_width_cycles": 70.1
+      },
+      "100-125": {
+        "n_engines": 278,
+        "coverage": 0.849,
+        "mean_width_cycles": 30.8
+      }
+    },
+    "by_true_rul_band": {
+      "0-30": {
+        "n_engines": 157,
+        "coverage": 0.828,
+        "mean_width_cycles": 36.7
+      },
+      "30-60": {
+        "n_engines": 115,
+        "coverage": 0.904,
+        "mean_width_cycles": 62.5
+      },
+      "60-100": {
+        "n_engines": 173,
+        "coverage": 0.827,
+        "mean_width_cycles": 59.4
+      },
+      "100-125": {
+        "n_engines": 262,
+        "coverage": 0.943,
+        "mean_width_cycles": 34.9
+      }
+    }
+  },
+  "failure_probability": {
+    "horizon_cycles": 30,
+    "positives": 159,
+    "brier_score": 0.0265,
+    "roc_auc": 0.9934,
+    "precision_at_0.5": 0.906,
+    "recall_at_0.5": 0.912
+  },
+  "baselines": {
+    "constant_mean_rul_rmse": 44.65,
+    "groupkfold_cv_rmse_by_engine": {
+      "folds": [
+        14.49,
+        15.32,
+        14.67,
+        14.78,
+        14.13
+      ],
+      "mean": 14.68
+    },
+    "leaky_random_row_split_fd001_rmse": 8.39
+  }
+}

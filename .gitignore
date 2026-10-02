@@ -1,7 +1,7 @@
 # Project-specific
 .venv/
 .env
-data/mock/*.csv
+data/processed/
 data/raw/
 models/*.joblib
 .DS_Store
