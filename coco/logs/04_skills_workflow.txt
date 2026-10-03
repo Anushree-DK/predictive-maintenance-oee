@@ -1,0 +1,60 @@
+﻿I'll start by triaging fleet FD003 to find the most at-risk engine. Loading the fleet-risk-triage skill first.Running the triage query for fleet FD003.Now fetching the fastest-drifting sensors for these engines.Here's the **Fleet FD003 risk triage**:
+
+| Engine | Risk | RUL (cycles) | 90% Interval | Fail-in-30 % | Top Drifting Sensor |
+|---|---|---|---|---|---|
+| **FD003-ENG-046** | CRITICAL | 3.3 | 0.2 – 58.7 | 98% | phi (fuel-flow / Ps30 ratio) @ 0.131 σ/cycle |
+| FD003-ENG-082 | CRITICAL | 14.4 | 4.4 – 48.7 | 96% | htBleed (bleed enthalpy) @ 0.142 σ/cycle |
+| FD003-ENG-094 | CRITICAL | 8.7 | 6.1 – 33.9 | 98% | htBleed (bleed enthalpy) @ 0.119 σ/cycle |
+| FD003-ENG-026 | CRITICAL | 6.6 | 6.6 – 55.7 | 98% | T24 (LPC outlet temp) @ 0.093 σ/cycle |
+| FD003-ENG-024 | CRITICAL | 9.1 | 7.3 – 34.3 | 99% | W31 (HPT coolant bleed) @ 0.075 σ/cycle |
+
+Model **V20261002_144659**, scored **2026-10-02 14:58 UTC**.
+
+**FD003-ENG-046** is the single most at-risk engine — lowest RUL lower bound (0.2 cycles) and predicted RUL of just 3.3 cycles. Now I'll diagnose it.Running the three diagnosis queries for FD003-ENG-046.Here is the full diagnosis for **FD003-ENG-046**:
+
+---
+
+### Diagnosis: FD003-ENG-046
+
+**Prediction**
+- **RUL:** 3.3 cycles (90% interval: 0.2 – 58.7 cycles)
+- **Risk class:** CRITICAL
+- **Probability of failure within 30 cycles:** 98%
+- **Age:** 180 cycles flown | **Fleet:** FD003 (sea-level operations)
+- **Known fault modes:** HPC degradation, fan degradation
+
+**Top Drivers** (SHAP contribution in RUL cycles; negative = shortens life)
+
+| Rank | Sensor | What it measures | Contribution |
+|---|---|---|---|
+| 1 | Ps30 | Static pressure at HPC outlet | −22.3 cycles |
+| 2 | TIME_CYCLE | Engine age | −11.9 cycles |
+| 3 | htBleed | Bleed enthalpy | −11.0 cycles |
+| 4 | Nc | Physical core speed | −10.2 cycles |
+| 5 | T30 | Total temperature at HPC outlet | −9.0 cycles |
+
+Base RUL before adjustments: 90.2 cycles. These five drivers alone subtract ~65 cycles.
+
+**Physics**
+The dominant driver — Ps30 (HPC outlet static pressure) — along with Nc and T30 all characterize the high-pressure compressor module. Per the NASA C-MAPSS paper (pp. 6–7), degradation is simulated by exponentially decreasing HPC flow capacity and efficiency until the health index reaches zero, which manifests as declining HPC outlet pressure and rising outlet temperatures. The simultaneous drift in htBleed (bleed enthalpy) is consistent with the compressor working harder to maintain demanded thrust, altering bleed-air conditions. FD003's dual fault modes (HPC + fan degradation) compound the effect.
+
+**Recommendation**
+This engine requires **immediate removal from service** for HPC module inspection and likely overhaul. With a predicted RUL of 3.3 cycles and the lower bound at 0.2 cycles, continued operation carries near-certain failure risk. Priority: **urgent / ground immediately**.
+
+---
+
+Now I'll draft the work order.I already have the prediction data from the triage. Now I'll get the top drifting sensor and draft the work order.Work order drafted. Here's the summary:
+
+**P1 INSPECTION** work order `2ffd98b3-6ce3-46e5-983f-6783467a5733` has been created for **FD003-ENG-046** with status **PENDING_APPROVAL**.
+
+**Pending approval queue** (3 orders):
+
+| Engine | Type | Priority | Risk | RUL | Created |
+|---|---|---|---|---|---|
+| FD003-ENG-046 | INSPECTION | P1 | CRITICAL | 3.3 | 2026-10-03 13:39 |
+| FD001-ENG-034 | INSPECTION | P1 | CRITICAL | 4.1 | 2026-10-02 14:26 |
+| FD001-ENG-076 | INSPECTION | P1 | CRITICAL | 6.5 | 2026-10-02 14:26 |
+
+The draft is now waiting for a maintenance planner to approve it in the Command Center's "Work orders awaiting approval" panel.
+
+This triage-diagnose-draft workflow could be scheduled as a recurring `cortex automation` if you'd like it to run automatically (e.g., daily after each scoring run).

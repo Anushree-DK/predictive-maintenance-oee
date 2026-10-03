@@ -205,6 +205,18 @@ build. Every prompt is in `coco/prompts/` and its output in `coco/logs/`.
 | `02_streamlit_in_snowflake` | Built `streamlit_app/`, a Streamlit in Snowflake version of the command center (KPIs, fleet table, SHAP drivers, work-order approvals, live replay), added the `streamlit` step to `scripts/deploy_snowflake.py`, and deployed `PDM.PUBLIC.FLEET_COMMAND_CENTER`. |
 | `03_fix_streamlit_app` | Fixed a wrong column found when the app was run against live data, and replaced string-built SQL with bound parameters plus a sensor-name allow-list. |
 
+| `04_skills_workflow` | Ran the project's three Cortex Code skills in one workflow: triage fleet FD003, diagnose its most at-risk engine (FD003-ENG-046: RUL 3.3 cycles, Ps30 cutting 22 cycles off its life, NASA paper cited), and draft a P1 inspection work order for approval. |
+
+### Project skills (`.cortex/skills/`)
+
+| Skill | Input → processing → output |
+|---|---|
+| `fleet-risk-triage` | a fleet → live predictions and drift signals in Snowflake → ranked at-risk engines |
+| `engine-diagnosis` | an engine → SHAP drivers + Cortex Search over NASA's paper → cited diagnosis |
+| `draft-work-orders` | engines → `DRAFT_WORK_ORDER` procedure → work orders pending approval |
+
+Cortex Code discovers them automatically when started in this folder (`cortex skill list`).
+
 Run one the same way:
 
 ```powershell
