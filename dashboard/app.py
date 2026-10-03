@@ -74,8 +74,8 @@ RISK_COLOR = {"CRITICAL": "#d62728", "HIGH": "#ff7f0e", "MEDIUM": "#f2c744", "LO
 
 st.title("Unified Command Center")
 st.caption(
-    f"Backend: `{config.SNOWFLAKE_MODE}` · NASA C-MAPSS turbofan fleets — real sensor data, "
-    "every KPI derived from it (see DATA_SOURCES.md)."
+    "NASA C-MAPSS turbofan fleets: real sensor readings, with every KPI derived from them"
+    + (" · running on Snowflake" if config.SNOWFLAKE_MODE == "snowflake" else "")
 )
 
 try:
@@ -102,7 +102,7 @@ col4.metric("RUL error (RMSE, NASA test set)", f"{metrics['rul']['overall']['rms
 col5.metric("Est. fleet risk exposure", f"${fleet_risk_exposure(summary):,.0f}")
 st.caption(
     "Risk exposure = expected downtime cost if nothing is done (calibrated P(failure) × cost gap "
-    "between an emergency and a scheduled repair). Cost rates are assumptions in config.py."
+    "between an emergency and a scheduled repair). Cost rates are planning assumptions."
 )
 
 with st.expander("How accurate is the model? (evaluated on NASA's held-out test engines)"):
@@ -126,8 +126,7 @@ if config.SNOWFLAKE_MODE == "snowflake":
 
     @st.fragment(run_every=15)
     def live_replay_panel():
-        """Streams held-back real NASA cycles into RAW_SENSOR_DATA (sql/007_live_replay.sql);
-        SCORE_FLEET_TASK picks them up on its own. Polls for new scoring runs and refreshes."""
+        """Replay controls; refreshes the page when a new scoring run lands."""
         session = get_session()
         queued = session.sql("SELECT COUNT(*) FROM REPLAY_QUEUE").collect()[0][0]
         last_run = session.sql(
@@ -141,9 +140,8 @@ if config.SNOWFLAKE_MODE == "snowflake":
 
         with st.expander("Live replay — stream real sensor readings through the pipeline", expanded=queued > 0):
             st.caption(
-                "Rewind holds back each in-service engine's last 20 real NASA cycles; streaming inserts them into "
-                "RAW_SENSOR_DATA, where a Snowflake stream triggers SCORE_FLEET_TASK to rescore the fleet "
-                "(about a minute). This page refreshes itself when the task finishes."
+                "Rewind holds back each engine's last 20 real NASA cycles. Streaming sends them back in, "
+                "and Snowflake rescores the fleet automatically in about a minute. This page refreshes itself."
             )
             r1, r2, r3, r4, r5 = st.columns([1, 1, 1, 1, 2])
             if r1.button("Rewind 20 cycles", disabled=queued > 0):
@@ -172,14 +170,14 @@ if backtest:
     st.subheader("Business impact — backtest on all 709 real engine failures")
     predictive, fixed = backtest["predictive"], backtest["fixed_interval_same_catch_rate"]
     b1, b2, b3, b4 = st.columns(4)
-    b1.metric("Failures caught in time", f"{predictive['catch_rate']:.1%}",
-              f"{predictive['failures_caught']} of {predictive['engines']}", delta_color="off")
-    b2.metric("Shop visits vs. fixed interval", f"−{backtest['shop_visit_reduction']:.0%}",
-              f"{predictive['shop_visits_per_100k_cycles']:.0f} vs {fixed['shop_visits_per_100k_cycles']:.0f} per 100k cycles",
-              delta_color="off")
-    b3.metric("Engine life used", f"{predictive['mean_share_of_life_used']:.1%}",
-              f"vs {fixed['mean_share_of_life_used']:.1%} fixed interval", delta_color="off")
-    b4.metric("Median warning", f"{predictive['median_warning_cycles']:.0f} cycles", "before failure", delta_color="off")
+    b1.metric("Failures caught in time", f"{predictive['catch_rate']:.1%}")
+    b1.caption(f"{predictive['failures_caught']} of {predictive['engines']} engines")
+    b2.metric("Shop visits vs. fixed interval", f"−{backtest['shop_visit_reduction']:.0%}")
+    b2.caption(f"{predictive['shop_visits_per_100k_cycles']:.0f} vs {fixed['shop_visits_per_100k_cycles']:.0f} per 100k flight cycles")
+    b3.metric("Engine life used", f"{predictive['mean_share_of_life_used']:.1%}")
+    b3.caption(f"vs {fixed['mean_share_of_life_used']:.1%} with fixed intervals")
+    b4.metric("Median warning", f"{predictive['median_warning_cycles']:.0f} cycles")
+    b4.caption("before failure")
     with st.expander("How this was measured, and the trade-off curve"):
         st.caption(
             backtest["method"] + " Policy: " + backtest["headline_policy"] + ". The fixed-interval baseline overhauls "
@@ -204,7 +202,19 @@ if backtest:
         fig.update_yaxes(tickformat=".0%")
         fig.update_layout(legend=dict(orientation="h", y=-0.25), hovermode="x unified")
         st.plotly_chart(fig, width="stretch")
-        st.dataframe(backtest_curve, hide_index=True)
+        st.dataframe(
+            backtest_curve[["RUL_LOWER_THRESHOLD", "CATCH_RATE", "PREDICTIVE_SHARE_OF_LIFE_USED",
+                            "FIXED_INTERVAL_SHARE_OF_LIFE_USED", "PREDICTIVE_SHOP_VISITS_PER_100K",
+                            "FIXED_INTERVAL_SHOP_VISITS_PER_100K"]].rename(columns={
+                "RUL_LOWER_THRESHOLD": "Trigger (cycles)", "CATCH_RATE": "Failures caught",
+                "PREDICTIVE_SHARE_OF_LIFE_USED": "Life used (predictive)",
+                "FIXED_INTERVAL_SHARE_OF_LIFE_USED": "Life used (fixed)",
+                "PREDICTIVE_SHOP_VISITS_PER_100K": "Shop visits / 100k (predictive)",
+                "FIXED_INTERVAL_SHOP_VISITS_PER_100K": "Shop visits / 100k (fixed)",
+            }).style.format({"Failures caught": "{:.1%}", "Life used (predictive)": "{:.1%}", "Life used (fixed)": "{:.1%}",
+                             "Shop visits / 100k (predictive)": "{:.0f}", "Shop visits / 100k (fixed)": "{:.0f}"}),
+            hide_index=True,
+        )
 
 st.divider()
 
@@ -215,11 +225,12 @@ with left:
     table = summary.assign(
         RUL_INTERVAL=summary["RUL_LOWER"].map("{:.0f}".format) + "–" + summary["RUL_UPPER"].map("{:.0f}".format)
     )
-    display_cols = ["MACHINE_ID", "FLEET", "RISK_CLASS", "RUL_PREDICTION", "RUL_INTERVAL", "FAILURE_PROBABILITY", "OEE"]
+    display_cols = {"MACHINE_ID": "Engine", "FLEET": "Fleet", "RISK_CLASS": "Risk", "RUL_PREDICTION": "RUL (cycles)",
+                    "RUL_INTERVAL": "90% interval", "FAILURE_PROBABILITY": "P(fail ≤ 30)", "OEE": "OEE"}
     st.dataframe(
-        table[display_cols].style.apply(
-            lambda row: [f"background-color: {RISK_COLOR[row['RISK_CLASS']]}33"] * len(row), axis=1
-        ).format({"RUL_PREDICTION": "{:.0f}", "FAILURE_PROBABILITY": "{:.0%}", "OEE": "{:.0%}"}),
+        table[list(display_cols)].rename(columns=display_cols).style.apply(
+            lambda row: [f"background-color: {RISK_COLOR[row['Risk']]}33"] * len(row), axis=1
+        ).format({"RUL (cycles)": "{:.0f}", "P(fail ≤ 30)": "{:.0%}", "OEE": "{:.0%}"}),
         hide_index=True,
         width="stretch",
         height=420,
@@ -269,7 +280,7 @@ with right:
         fig.update_layout(legend=dict(orientation="h", y=-0.3), bargap=0.35)
         st.plotly_chart(fig, width="stretch")
 
-    st.markdown("**AI / Decision layer**")
+    st.markdown("**Diagnosis**")
     reasoning = explain(selected_machine, machine_row.to_dict(), feature_row)
     st.write(f"- **Why it will fail:** {reasoning['why']}")
     st.write(f"- **Root cause:** {reasoning['root_cause']}")
@@ -279,9 +290,12 @@ with right:
         with st.expander(f"Sources — NASA C-MAPSS documentation ({len(reasoning['citations'])})"):
             for citation in reasoning["citations"]:
                 st.caption(citation)
-    st.caption(f"Reasoning: {reasoning['source']}")
+    st.caption(
+        "Written by Snowflake Cortex from this engine's data and NASA's documentation"
+        if reasoning["source"].startswith("Cortex") else "Rule-based summary (Cortex not available)"
+    )
 
-    st.markdown("**Agentic actions**")
+    st.markdown("**Actions**")
     a1, a2, a3 = st.columns(3)
     action_map = {
         "Create Work Order": a1,
@@ -307,23 +321,29 @@ capacity = p1.slider("Shop capacity (engines per slot)", 1, 40, config.SHOP_CAPA
 n_slots = p2.slider(f"Slots to plan (one every {config.SHOP_SLOT_CYCLES} cycles)", 1, 12, config.PLANNING_HORIZON_SLOTS)
 plan = optimize_schedule(summary, capacity=capacity, n_slots=n_slots)
 s1, s2, s3, s4 = st.columns(4)
-s1.metric("Ground now", len(plan["ground_now"]), "likely to fail before the first slot", delta_color="off")
-s2.metric("Engines scheduled", len(plan["schedule"]), f"of {plan['capacity_total']} slots available", delta_color="off")
-s3.metric("Expected downtime cost, optimized", f"${plan['expected_cost_optimized'] / 1e6:,.1f}M",
-          f"−${(plan['expected_cost_worst_first'] - plan['expected_cost_optimized']) / 1e6:,.1f}M vs worst-first",
-          delta_color="inverse")
+s1.metric("Ground now", len(plan["ground_now"]))
+s1.caption("likely to fail before the first slot")
+s2.metric("Engines scheduled", len(plan["schedule"]))
+s2.caption(f"of {plan['capacity_total']} slots available")
+s3.metric("Expected downtime cost (optimized)", f"${plan['expected_cost_optimized'] / 1e6:,.1f}M")
+s3.caption(f"${(plan['expected_cost_worst_first'] - plan['expected_cost_optimized']) / 1e6:,.1f}M less than servicing the worst engines first")
 s4.metric("If nothing is scheduled", f"${plan['expected_cost_do_nothing'] / 1e6:,.1f}M")
 st.caption(
-    "Exact MILP (scipy) over each engine's RUL distribution: a slot is spent on an engine only when servicing it "
-    "then is worth more than the risk of leaving it, and engines that will likely fail before any slot are flagged "
-    "to ground instead. Worst-first = fill slots in order of lowest predicted RUL. Costs use config.py's assumptions."
+    "A shop slot goes to an engine only when servicing it then is worth more than the risk of leaving it. "
+    "Engines likely to fail before any slot opens are flagged to ground instead. Cost rates are planning assumptions."
 )
 g, sch = st.columns([1, 2])
 g.markdown("**Ground now**")
-g.dataframe(plan["ground_now"], hide_index=True, height=300)
+g.dataframe(
+    plan["ground_now"].rename(columns={"MACHINE_ID": "Engine", "RUL_PREDICTION": "RUL (cycles)",
+                                       "RUL_LOWER": "RUL lower bound", "FAILURE_PROBABILITY": "P(fail ≤ 30)"}),
+    hide_index=True, height=300,
+)
 sch.markdown("**Shop schedule**")
 sch.dataframe(
-    plan["schedule"].style.format({"P_FAIL_BEFORE_SERVICE": "{:.0%}", "EXPECTED_SAVING_USD": "${:,.0f}"}),
+    plan["schedule"].rename(columns={"SLOT": "Slot", "SERVICE_BY_CYCLE": "Service by cycle", "MACHINE_ID": "Engine",
+                                     "P_FAIL_BEFORE_SERVICE": "Risk before service", "EXPECTED_SAVING_USD": "Expected saving"})
+    .style.format({"Risk before service": "{:.0%}", "Expected saving": "${:,.0f}"}),
     hide_index=True, height=300,
 )
 

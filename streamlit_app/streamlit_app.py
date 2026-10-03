@@ -233,8 +233,8 @@ if not reviewed.empty:
 st.divider()
 st.subheader("Live replay")
 st.caption(
-    "Rewind holds back each engine's last 20 real cycles; streaming inserts them into "
-    "RAW_SENSOR_DATA where SCORE_FLEET_TASK rescores the fleet."
+    "Rewind holds back each engine's last 20 real NASA cycles. Streaming sends them back in, "
+    "and Snowflake rescores the fleet automatically in about a minute."
 )
 
 queued = session.sql("SELECT COUNT(*) AS N FROM REPLAY_QUEUE").to_pandas()["N"].iloc[0]
