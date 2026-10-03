@@ -11,6 +11,8 @@ import config
 
 def _read_local(table_name: str) -> pd.DataFrame:
     path = config.LOCAL_DATA_DIR / f"{table_name.lower()}.csv"
+    if not path.exists() and path.with_suffix(".csv.gz").exists():
+        path = path.with_suffix(".csv.gz")
     if not path.exists():
         raise FileNotFoundError(f"{path} not found — run: python scripts/load_cmapss.py")
     return pd.read_csv(path)

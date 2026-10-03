@@ -1,0 +1,9 @@
+streamlit>=1.40
+pandas
+numpy
+scikit-learn==1.9.1
+scipy
+plotly
+joblib
+shap==0.51.0
+python-dotenv

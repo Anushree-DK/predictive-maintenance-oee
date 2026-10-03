@@ -12,6 +12,9 @@ ROOT_DIR = Path(__file__).parent
 RAW_CMAPSS_DIR = ROOT_DIR / "data" / "raw" / "CMAPSS"
 LOCAL_DATA_DIR = ROOT_DIR / "data" / "processed"
 MODELS_DIR = ROOT_DIR / "models"
+DEMO_DIR = ROOT_DIR / "data" / "demo"  # snapshot used when the full data isn't present (hosted demo)
+if not LOCAL_DATA_DIR.exists() and DEMO_DIR.exists():
+    LOCAL_DATA_DIR = MODELS_DIR = DEMO_DIR
 REPORTS_DIR = ROOT_DIR / "reports"
 
 # local = CSVs in data/processed, snowflake = the same tables in Snowflake
