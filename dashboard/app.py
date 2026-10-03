@@ -18,7 +18,7 @@ from src.ml.predict import load_model, predict_with_bundle
 PREDICTION_COLUMNS = ["MACHINE_ID", "RUL_PREDICTION", "RUL_LOWER", "RUL_UPPER", "FAILURE_PROBABILITY", "RISK_CLASS"]
 from src.outcomes import log_action, record_failure_result
 
-st.set_page_config(page_title="Unified Command Center", layout="wide")
+st.set_page_config(page_title="PrognoSys · Fleet Command Center", layout="wide")
 
 
 @st.cache_data(ttl=60)
@@ -32,7 +32,8 @@ def load_dashboard_data():
         bundle = load_model()
         features = get_feature_table(group_col="MACHINE_ID")
         predictions = predict_with_bundle(bundle, features, id_col="MACHINE_ID")
-        metrics, model_label = bundle["metrics"], f"local model trained {bundle['trained_at']}"
+        trained = pd.Timestamp(bundle["trained_at"]).strftime("%d %b %Y")
+        metrics, model_label = bundle["metrics"], f"RUL model trained {trained} on NASA's run-to-failure engines"
     predictions = add_expected_cost_column(predictions[PREDICTION_COLUMNS])
 
     summary = (
@@ -72,7 +73,7 @@ RAISES_RUL, LOWERS_RUL = "#2a78d6", "#e34948"
 RISK_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 RISK_COLOR = {"CRITICAL": "#d62728", "HIGH": "#ff7f0e", "MEDIUM": "#f2c744", "LOW": "#2ca02c"}
 
-st.title("Unified Command Center")
+st.title("PrognoSys · Fleet Command Center")
 st.caption(
     "NASA C-MAPSS turbofan fleets: real sensor readings, with every KPI derived from them"
     + (" · running on Snowflake" if config.SNOWFLAKE_MODE == "snowflake" else "")
@@ -109,10 +110,15 @@ with st.expander("How accurate is the model? (evaluated on NASA's held-out test 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("RUL RMSE", f"{metrics['rul']['overall']['rmse']:.1f} cycles")
     m2.metric(f"{config.PREDICTION_INTERVAL:.0%} interval coverage", f"{metrics['rul_interval']['empirical_coverage']:.0%}")
-    m3.metric("Failure-in-30 AUC", f"{metrics['failure_probability']['roc_auc']:.3f}")
-    m4.metric("Recall at P ≥ 0.5", f"{metrics['failure_probability']['recall_at_0.5']:.0%}")
+    m3.metric("Failure prediction AUC", f"{metrics['failure_probability']['roc_auc']:.3f}")
+    m4.metric("Failures detected", f"{metrics['failure_probability']['recall_at_0.5']:.0%}")
+    st.caption("AUC and detection rate are for failure within the next 30 cycles.")
+    per_fleet = pd.DataFrame(metrics["rul"]["per_fleet"]).T.rename_axis("Fleet").reset_index().rename(columns={
+        "rmse": "RMSE (cycles)", "mae": "Mean error (cycles)", "nasa_score": "NASA score", "n_engines": "Engines",
+    })
     st.dataframe(
-        pd.DataFrame(metrics["rul"]["per_fleet"]).T.rename_axis("Fleet").reset_index(),
+        per_fleet.style.format({"RMSE (cycles)": "{:.1f}", "Mean error (cycles)": "{:.1f}",
+                                "NASA score": "{:,.0f}", "Engines": "{:.0f}"}),
         hide_index=True, width="stretch",
     )
     st.caption(
